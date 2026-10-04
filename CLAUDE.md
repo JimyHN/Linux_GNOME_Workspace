@@ -86,11 +86,19 @@ el perfil `debian`.
 | Terminal del dash | `org.gnome.Ptyxis.desktop` | no existe |
 | Firefox | snap, `firefox_firefox.desktop` | `firefox-esr.desktop` |
 | Tema Yaru | preinstalado | en los repos (`yaru-theme-gtk`) |
+| Variante de iconos | `Yaru-magenta-dark` existe | puede que solo `Yaru-magenta` |
 
 Son forks distintos de la misma extensión, por eso el UUID no coincide;
 `_mapear_uuids()` lo traduce antes de escribir `enabled-extensions`. Los
 favoritos que no existan se caen del dash con `_filtrar_favoritos()` en vez
 de dejar huecos muertos.
+
+**Los temas se degradan solos.** Ubuntu genera `Yaru-magenta-dark` para GTK
+y para iconos; fuera de Ubuntu el paquete de Yaru no tiene por qué generar
+las mismas variantes, y una clave que apunte a un tema inexistente hace que
+GNOME caiga en su defecto sin decir nada. `_ajustar_temas()` comprueba que
+el tema exista y si no prueba `Yaru-magenta`, luego `Yaru-dark`, y si no hay
+nada quita la clave para no pisar el tema propio de la distro.
 
 **Los paquetes se instalan uno a uno.** En una sola llamada a `apt-get
 install`, un paquete inexistente tumba la instalación de todos los demás:

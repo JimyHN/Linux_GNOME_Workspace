@@ -108,7 +108,7 @@ class Ctx:
 # utilidades
 # ---------------------------------------------------------------------------
 
-def detectar_distro() -> tuple[str, dict]:
+def detectar_distro(os_release: Path = Path("/etc/os-release")) -> tuple[str, dict]:
     """Devuelve (nombre legible, perfil) segun /etc/os-release.
 
     Kali declara ID=kali e ID_LIKE=debian, asi que se busca primero por ID
@@ -116,7 +116,7 @@ def detectar_distro() -> tuple[str, dict]:
     Ubuntu en Kali y falla entero el paso de paquetes."""
     campos: dict[str, str] = {}
     try:
-        for linea in Path("/etc/os-release").read_text().splitlines():
+        for linea in os_release.read_text().splitlines():
             if "=" in linea:
                 k, v = linea.split("=", 1)
                 campos[k.strip()] = v.strip().strip('"')
@@ -577,6 +577,42 @@ def _filtrar_favoritos(contenido: str) -> tuple[str, list[str]]:
     return re.sub(r"favorite-apps=\[(.*?)\]", _sub, contenido), ausentes
 
 
+def _tema_disponible(clase: str, nombre: str) -> bool:
+    sub = "themes" if clase == "gtk-theme" else "icons"
+    casa = Path.home() / (".themes" if clase == "gtk-theme" else ".icons")
+    return any((b / nombre).is_dir()
+               for b in (Path("/usr/share") / sub, Path("/usr/local/share") / sub, casa))
+
+
+def _ajustar_temas(contenido: str) -> tuple[str, list[str]]:
+    """Degrada gtk-theme e icon-theme a una variante que exista aqui.
+
+    Ubuntu trae Yaru-magenta-dark para tema e iconos, pero fuera de Ubuntu
+    el paquete de Yaru no tiene por que generar las mismas variantes. Si se
+    deja la clave apuntando a un tema inexistente, GNOME cae en su defecto
+    sin decir nada y el escritorio sale distinto sin explicacion. Mejor
+    probar 'Yaru-magenta', luego 'Yaru-dark', y si no hay nada quitar la
+    clave para no pisar el tema propio de la distro."""
+    avisos = []
+    for clase in ("gtk-theme", "icon-theme"):
+        m = re.search(rf"^{clase}='([^']+)'$", contenido, re.M)
+        if not m:
+            continue
+        pedido = m.group(1)
+        if _tema_disponible(clase, pedido):
+            continue
+        alternativas = [pedido.removesuffix("-dark"), "Yaru-dark", "Yaru"]
+        elegido = next((a for a in alternativas if a != pedido and _tema_disponible(clase, a)), None)
+        if elegido:
+            contenido = re.sub(rf"^{clase}='[^']+'$", f"{clase}='{elegido}'", contenido, flags=re.M)
+            avisos.append(f"{clase}: '{pedido}' no existe aqui, se usa '{elegido}'")
+        else:
+            contenido = re.sub(rf"^{clase}='[^']+'\n", "", contenido, flags=re.M)
+            avisos.append(f"{clase}: '{pedido}' no existe y no hay alternativa Yaru; "
+                          "se deja el tema de la distro")
+    return contenido, avisos
+
+
 def paso_dconf(x: Ctx) -> None:
     c = x.c
     ramas = ramas_objetivo()
@@ -595,6 +631,12 @@ def paso_dconf(x: Ctx) -> None:
         for viejo, nuevo in _mapear_uuids(contenido, mapa):
             contenido = contenido.replace(f"'{viejo}'", f"'{nuevo}'")
             c.info(f"{viejo} → {nuevo} (nombre en esta distro)")
+
+        if "gtk-theme=" in contenido or "icon-theme=" in contenido:
+            contenido, avisos = _ajustar_temas(contenido)
+            for a in avisos:
+                c.aviso(a)
+                x.notas.append(a)
 
         if "favorite-apps=" in contenido:
             contenido, sin_app = _filtrar_favoritos(contenido)
