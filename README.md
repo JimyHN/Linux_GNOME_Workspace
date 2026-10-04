@@ -52,6 +52,9 @@ Dash to Panel, el efecto Glide de Burn My Windows…
 | `Shift`+`Super`+`B` | BurpSuite |
 | `Ctrl`+`Super`+`.` | Ambas pantallas |
 
+El dash solo ancla Nautilus: Ptyxis, el snap de Firefox y Deskflow son de
+Ubuntu y no existen en Kali, así que no se intentan anclar.
+
 **Tema y escritorio**: Yaru-magenta-dark con acento rosa y modo oscuro,
 teclado español, numlock encendido, sin bloqueo de sesión ni apagado de
 pantalla, y `edge-tiling` desactivado para que mande Tiling Assistant.
@@ -100,11 +103,14 @@ dconf dump /org/gnome/shell/extensions/vitals/
 
 ## Qué no viaja igual
 
-Algunas cosas dependen del hardware y el instalador las adapta sola: el panel
-de Dash to Panel está anclado al número de serie del monitor de origen, así
-que lo remapea al de la VM o lo deja por defecto si no puede identificarlo.
-Los atajos que abren programas que no estén instalados en la VM se avisan al
-final en vez de fallar en silencio.
+Algunas cosas dependen de la máquina y el instalador las adapta sola. El
+panel de Dash to Panel está anclado al identificador del monitor de origen:
+calcula el de esta máquina con el mismo algoritmo que usa la extensión y
+reescribe la configuración, así que el panel sale con su tamaño y posición
+sin tener que abrir sus preferencias.
+
+Los atajos que abren programas que no estén instalados se avisan al final en
+vez de fallar en silencio.
 
 ## Licencia
 

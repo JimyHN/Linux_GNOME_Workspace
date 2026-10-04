@@ -115,12 +115,25 @@ Tres cosas del equipo de referencia no son válidas en otra máquina. Si tocas
 estas áreas, acuérdate de que hay código que las compensa:
 
 **Identificador de monitor.** `dash-to-panel` guarda tamaño, posición y
-anclaje del panel en un JSON indexado por `VENDOR-SERIAL` (aquí
-`BNQ-A1S0292601Q`). `_remapear_monitor()` lo sustituye por el monitor de la
-VM; si no puede identificarlo —lo normal en virtualizado— **borra solo esas
-cinco claves** y conserva las otras 33 (colores, estilo de los puntos,
-márgenes), porque un panel con el color correcto y tamaño por defecto es mejor
-que uno sin configurar.
+anclaje del panel en un JSON indexado por monitor (aquí `BNQ-A1S0292601Q`).
+`clave_monitor_d2p()` calcula la clave de esta máquina reproduciendo el
+algoritmo de la extensión, copiado de su `panelSettings.js`:
+
+```js
+let [connector, vendor, product, serial] = logicalMonitor[5][0]
+let id = i
+if (vendor && serial) id = `${vendor}-${serial}`
+if (ids[id]) id = connector && !ids[connector] ? connector : i
+```
+
+O sea `VENDOR-SERIAL` cuando los hay y el **índice del monitor lógico**
+cuando no, que es el caso de una VM: la clave acaba siendo `"0"`. Los datos
+se piden a `org.gnome.Mutter.DisplayConfig.GetCurrentState`, la misma fuente
+que usa la extensión.
+
+Validación: ejecutado en el equipo de origen devuelve `BNQ-A1S0292601Q`,
+exactamente la clave que dash-to-panel había escrito por su cuenta. Si
+cambias este cálculo, comprueba eso mismo.
 
 **Rutas absolutas.** Varias claves guardan rutas con el nombre de usuario
 dentro: el `active-profile` de `burn-my-windows` y los `picture-uri` del
@@ -192,6 +205,18 @@ extensión —API, descarga, validez del zip, instalación— e informa de dónd
 se rompe. Es lo primero que hay que pedir cuando alguien dice que las
 extensiones no se instalan, en vez de teorizar: ya se descartaron por ese
 camino el User-Agent, la falta de build por versión de GNOME y el 404.
+
+## sudo
+
+`paso_comprobaciones` pide la contraseña una sola vez con `sudo -v` y aborta
+con un mensaje claro si falla. No se deja para el primer `apt`: ahí sudo
+reintenta tres veces desde dentro de un subproceso con la salida capturada,
+y desde fuera parece que el instalador se ha colgado.
+
+`Ctx.correr()` además reconoce los fallos de autenticación que lleguen más
+tarde. **Los mensajes de sudo están traducidos**, así que la lista de patrones
+cubre las dos formas: `3 incorrect password attempts` y `3 intentos
+incorrectos de contraseña`. Si añades patrones, añade los dos idiomas.
 
 ## Reglas de trabajo
 

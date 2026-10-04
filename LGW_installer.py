@@ -92,8 +92,16 @@ class Ctx:
         if r.returncode != 0:
             if r.stderr:
                 self.c.detalle(r.stderr)
+            motivo = (r.stderr or r.stdout or "").strip()
+            # sudo traduce sus mensajes, asi que hay que cubrir las dos formas.
+            if any(p in motivo.lower() for p in
+                   ("incorrect password", "contraseña incorrecta", "sorry, try again",
+                    "authentication failure", "a password is required",
+                    "intentos incorrectos de contraseña", "incorrect password attempts",
+                    "se necesita una contraseña", "lo siento, int")):
+                raise Fallo("contraseña de sudo incorrecta o caducada; "
+                            "vuelve a lanzar el instalador")
             if not tolerante:
-                motivo = (r.stderr or r.stdout or "").strip()
                 raise Fallo(motivo.splitlines()[-1] if motivo else f"codigo {r.returncode}")
         return r.stdout
 
@@ -180,17 +188,55 @@ def ramas_objetivo() -> list[tuple[Path, str]]:
     return [(f, leer_ini(f)[0]) for f in sorted(carpeta.glob("*.ini"))]
 
 
-def monitor_actual() -> str | None:
+# Forma de un monitor logico en la respuesta de GetCurrentState:
+# (x, y, escala, uint32 transform, primario, [(connector, vendor, product, serial)], {...})
+_RE_LOGICO = re.compile(
+    r"\((-?\d+), (-?\d+), ([\d.]+), uint32 (\d+), (true|false), \[\((.*?)\)\]")
+
+
+def clave_monitor_d2p() -> str | None:
+    """Calcula la clave con la que dash-to-panel indexa este monitor.
+
+    Reproduce tal cual lo que hace su panelSettings.js (setMonitorsInfo):
+
+        let [connector, vendor, product, serial] = logicalMonitor[5][0]
+        let id = i
+        if (vendor && serial) id = `${vendor}-${serial}`
+        if (ids[id]) id = connector && !ids[connector] ? connector : i
+
+    Es decir VENDOR-SERIAL cuando los hay, y si no el indice del monitor
+    logico. En una VM no suele haber ni vendor ni serial, asi que la clave
+    acaba siendo "0" — adivinarla permite dejar el panel con el tamaño y la
+    posicion correctos sin que el usuario toque nada.
+    """
     try:
-        salida = subprocess.run(["gdctl", "show"], capture_output=True,
-                                text=True, check=True).stdout
-    except (OSError, subprocess.CalledProcessError):
+        salida = subprocess.run(
+            ["gdbus", "call", "--session", "--dest", "org.gnome.Mutter.DisplayConfig",
+             "--object-path", "/org/gnome/Mutter/DisplayConfig",
+             "--method", "org.gnome.Mutter.DisplayConfig.GetCurrentState"],
+            capture_output=True, text=True, check=True, timeout=20).stdout
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return None
-    vendor = re.search(r"Vendor:\s*(\S+)", salida)
-    serial = re.search(r"Serial:\s*(\S+)", salida)
-    if vendor and serial and vendor.group(1).lower() not in ("unknown", "n/a"):
-        return f"{vendor.group(1)}-{serial.group(1)}"
-    return None
+
+    vistos: set[str] = set()
+    claves: list[tuple[str, bool]] = []
+    for i, m in enumerate(_RE_LOGICO.finditer(salida)):
+        campos = re.findall(r"'([^']*)'", m.group(6))
+        connector = campos[0] if len(campos) > 0 else ""
+        vendor = campos[1] if len(campos) > 1 else ""
+        serial = campos[3] if len(campos) > 3 else ""
+
+        clave = str(i)
+        if vendor and serial:
+            clave = f"{vendor}-{serial}"
+        if clave in vistos:
+            clave = connector if connector and connector not in vistos else str(i)
+        vistos.add(clave)
+        claves.append((clave, m.group(5) == "true"))
+
+    if not claves:
+        return None
+    return next((c for c, primario in claves if primario), claves[0][0])
 
 
 def extensiones_instaladas() -> set[str]:
@@ -269,8 +315,19 @@ def paso_comprobaciones(x: Ctx) -> None:
 
     if not shutil.which("sudo"):
         raise Fallo("hace falta sudo para instalar paquetes")
-    if not x._sudo_sin_clave():
-        c.info("sudo pedira la contraseña durante la instalacion de paquetes")
+    if x._sudo_sin_clave():
+        c.ok("sudo ya autorizado")
+    elif x.dry_run:
+        c.info("sudo pediria la contraseña (no se pide en simulacion)")
+    else:
+        # Pedirla aqui y una sola vez: si se deja para el primer apt, sudo
+        # reintenta tres veces desde dentro de un subproceso con la salida
+        # capturada y parece que el instalador se ha quedado colgado.
+        c.info("sudo necesita tu contraseña para instalar paquetes")
+        if subprocess.run(["sudo", "-v"]).returncode != 0:
+            raise Fallo("contraseña incorrecta: no se ha hecho ningun cambio, "
+                        "vuelve a lanzar el instalador")
+        c.ok("contraseña correcta")
 
 
 def paso_respaldo(x: Ctx) -> None:
@@ -594,7 +651,13 @@ def paso_extensiones(x: Ctx) -> None:
 
 
 def _remapear_monitor(contenido: str, monitor: str | None) -> tuple[str, str | None]:
-    """dash-to-panel guarda tamaño y posicion del panel por monitor."""
+    """Reescribe las claves de dash-to-panel al monitor de esta maquina.
+
+    Guarda tamaño, posicion y anclaje del panel en un JSON indexado por
+    monitor. Antes, si no se identificaba el monitor, se borraban esas
+    claves y el panel salia con el tamaño por defecto; ahora la clave se
+    calcula igual que la calcula la extension, asi que el panel queda listo
+    sin tener que abrir sus preferencias."""
     claves = "|".join(D2P_CLAVES_POR_MONITOR)
     origen = set(re.findall(r'"([A-Za-z0-9]+-[A-Za-z0-9]+)"\s*:', contenido))
     if not origen:
@@ -604,9 +667,8 @@ def _remapear_monitor(contenido: str, monitor: str | None) -> tuple[str, str | N
             contenido = contenido.replace(f'"{viejo}"', f'"{monitor}"')
         return contenido, None
     contenido = re.sub(rf"^({claves})=.*\n", "", contenido, flags=re.M)
-    return contenido, ("no se pudo identificar el monitor de esta maquina: el panel de "
-                       "dash-to-panel quedara con tamaño y posicion por defecto "
-                       "(ajustalo una vez en sus preferencias)")
+    return contenido, ("no se pudo preguntar a Mutter por el monitor; el panel "
+                       "quedara con tamaño y posicion por defecto")
 
 
 def _fusionar_habilitadas(contenido: str, instaladas: set[str], previas: set[str],
@@ -715,7 +777,7 @@ def paso_dconf(x: Ctx) -> None:
     if not ramas:
         raise Fallo("no hay ningun .ini en data/dconf/")
 
-    monitor = monitor_actual()
+    monitor = clave_monitor_d2p()
     instaladas = extensiones_instaladas()
     previas = set(subprocess.run(
         ["gsettings", "get", "org.gnome.shell", "enabled-extensions"],
@@ -766,6 +828,8 @@ def paso_dconf(x: Ctx) -> None:
 
         if fichero.stem.endswith("dash-to-panel"):
             contenido, nota = _remapear_monitor(contenido, monitor)
+            if monitor and not nota:
+                c.info(f"panel de dash-to-panel ajustado al monitor '{monitor}'")
             if nota:
                 c.aviso(nota)
                 x.notas.append(nota)
