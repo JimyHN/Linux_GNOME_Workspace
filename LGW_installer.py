@@ -70,10 +70,10 @@ def abrir(url: str, timeout: int = 30):
 # ---------------------------------------------------------------------------
 
 class Ctx:
-    def __init__(self, consola: Consola, dry_run: bool, via_dialogos: bool = False):
+    def __init__(self, consola: Consola, dry_run: bool, reconfigurar: bool = False):
         self.c = consola
         self.dry_run = dry_run
-        self.via_dialogos = via_dialogos
+        self.reconfigurar = reconfigurar
         self.perfil: dict = {}
         self.so: str = ""
         self.hechos = 0
@@ -500,52 +500,6 @@ def paso_sublime(x: Ctx) -> None:
     c.ok("Sublime Text instalado (ejecutable: subl)")
 
 
-def shell_accesible() -> bool:
-    """Si hay un GNOME Shell vivo en el bus de sesion al que pedirle cosas."""
-    if not shutil.which("gdbus"):
-        return False
-    r = subprocess.run(
-        ["gdbus", "call", "--session", "--dest", "org.gnome.Shell",
-         "--object-path", "/org/gnome/Shell", "--method",
-         "org.freedesktop.DBus.Properties.Get",
-         "org.gnome.Shell.Extensions", "ShellVersion"],
-        capture_output=True, text=True)
-    return r.returncode == 0
-
-
-def _instalar_via_shell(x: Ctx, uuid: str) -> bool:
-    """Le pide al Shell que instale la extension, como hace el navegador.
-
-    Es la unica forma de que GNOME la cargue sin cerrar sesion. Poner los
-    ficheros en ~/.local/share no basta: el Shell solo escanea al arrancar,
-    ReloadExtension esta deprecado y devuelve
-    'ReloadExtension is deprecated and does not work', y en Wayland no se
-    puede reiniciar el Shell. InstallRemoteExtension descarga, instala y
-    carga de una vez, que es lo que pasa al pulsar el interruptor en
-    extensions.gnome.org.
-
-    A cambio muestra un dialogo de confirmacion por extension, el mismo que
-    sale al instalarla desde el navegador."""
-    if x.dry_run:
-        x.c.detalle(f"(dry-run) InstallRemoteExtension {uuid}")
-        return True
-    try:
-        r = subprocess.run(
-            ["gdbus", "call", "--session", "--dest", "org.gnome.Shell",
-             "--object-path", "/org/gnome/Shell", "--method",
-             "org.gnome.Shell.Extensions.InstallRemoteExtension", uuid],
-            capture_output=True, text=True, timeout=300)
-    except subprocess.TimeoutExpired:
-        raise Fallo("el dialogo de confirmacion no se respondio en 5 minutos")
-    salida = (r.stdout + r.stderr).strip()
-    x.c.detalle(salida)
-    if r.returncode != 0:
-        raise Fallo(salida.splitlines()[-1] if salida else f"codigo {r.returncode}")
-    if "cancelled" in salida:
-        raise Fallo("cancelada en el dialogo de confirmacion")
-    return "successful" in salida
-
-
 def _instalar_zip(x: Ctx, uuid: str, datos: bytes) -> None:
     """Instala el zip con gnome-extensions y, si falla, a mano.
 
@@ -595,38 +549,12 @@ def paso_extensiones(x: Ctx) -> None:
     instaladas = extensiones_instaladas()
     puestas, sin_build, con_error = [], [], []
 
-    # Por defecto, descarga directa: ni un clic. El precio es cerrar sesion
-    # una vez, porque el Shell solo escanea extensiones al arrancar. Con
-    # --dialogos se le pide al Shell que las instale (InstallRemoteExtension),
-    # que las deja cargadas al momento a cambio de un dialogo por extension.
-    # No hay tercera via: en Wayland, Mutter no implementa el protocolo
-    # virtual-keyboard, asi que el dialogo no se puede confirmar por software.
-    via_shell = x.via_dialogos and shell_accesible()
-    if via_shell:
-        c.info("se instalaran a traves de GNOME Shell: un dialogo de confirmacion "
-               "por extension, y quedan activas al momento")
-    else:
-        if x.via_dialogos:
-            c.aviso("no hay GNOME Shell en el bus de sesion; se usa descarga directa")
-        c.info("descarga directa, sin dialogos: habra que cerrar sesion al final "
-               "para que GNOME las cargue")
+    c.info("descarga directa: GNOME las carga al reiniciar la sesion")
 
     for e in lista:
         uuid, nombre = e["uuid"], e["nombre"]
         if uuid in instaladas:
             c.saltado(f"{nombre} ya instalada")
-            continue
-
-        if via_shell:
-            c.accion("Instalando", f"{nombre} (confirma en el dialogo)")
-            try:
-                _instalar_via_shell(x, uuid)
-            except Fallo as err:
-                c.error(f"{nombre}: {err}")
-                con_error.append(nombre)
-                continue
-            puestas.append(uuid)
-            c.ok(f"{nombre} instalada y cargada")
             continue
 
         c.accion("Consultando", f"{nombre}")
@@ -693,10 +621,7 @@ def paso_extensiones(x: Ctx) -> None:
                        "Repite con -v para ver el detalle")
     if not puestas and not sin_build and not con_error:
         c.info("no habia nada que instalar: ya estaban todas")
-    if via_shell:
-        c.info("ya estan cargadas: no hace falta cerrar sesion")
-    else:
-        c.info("GNOME las carga al reiniciar la sesion, no antes")
+    c.info("GNOME las carga al reiniciar la sesion, no antes")
 
 
 AMO = "https://addons.mozilla.org/firefox/downloads/latest"
@@ -734,88 +659,71 @@ def paso_firefox(x: Ctx) -> None:
     except (OSError, json.JSONDecodeError):
         raise Fallo("no se pudo leer data/firefox.json")
 
-    # --- pestañas verticales, por perfil ---
     perfiles = perfiles_firefox()
     if not perfiles:
-        c.aviso("no hay ningun perfil de Firefox todavia")
-        x.notas.append("abre Firefox una vez y repite: python3 LGW_installer.py "
-                       "--only firefox")
-    else:
-        lineas = "".join(
-            f'user_pref("{k}", {json.dumps(v)});\n' for k, v in cfg["prefs"].items())
-        cabecera = ("// Generado por LGW_installer.py\n"
-                    "// Pestañas verticales nativas (Firefox 136+).\n")
-        for perfil in perfiles:
-            destino = perfil / "user.js"
-            c.accion("Configurando", f"pestañas a la izquierda → {perfil.name}")
-            if x.dry_run:
-                continue
-            previo = destino.read_text(errors="replace") if destino.is_file() else ""
-            # Quitar solo nuestras claves y conservar lo que hubiera puesto el
-            # usuario a mano en user.js.
-            conservado = "\n".join(
-                l for l in previo.splitlines()
-                if not any(f'"{k}"' in l for k in cfg["prefs"])
-                and not l.startswith("// Generado por LGW_installer.py")
-                and not l.startswith("// Pestañas verticales"))
-            destino.write_text(cabecera + lineas
-                               + (conservado.strip() + "\n" if conservado.strip() else ""))
-        c.ok(f"pestañas verticales en {len(perfiles)} perfil"
-             f"{'es' if len(perfiles) != 1 else ''}")
-
-    # --- extensiones, por politica empresarial ---
-    exts = cfg.get("extensiones", [])
-    if not exts:
-        c.saltado("no hay extensiones de Firefox que instalar")
+        c.aviso("no hay ningun perfil de Firefox; abre Firefox una vez y repite")
+        x.notas.append("Firefox no tenia perfil: abrelo una vez y vuelve a lanzar "
+                       "el instalador para las pestañas y las extensiones")
         return
 
-    ajustes = {
-        e["id"]: {"installation_mode": "normal_installed",
-                  "install_url": f"{AMO}/{e['slug']}/latest.xpi"}
-        for e in exts
-    }
-    for e in exts:
-        c.accion("Instalando", f"{e['nombre']}")
+    prefs = cfg.get("prefs", {})
+    exts = cfg.get("extensiones", [])
+    puestas = yaestaban = 0
 
-    destinos = [Path(d) for d in FIREFOX_POLITICAS
-                if Path(d).parent.is_dir() or Path(d).is_dir()]
-    if not destinos:
-        destinos = [Path(FIREFOX_POLITICAS[0])]
+    for perfil in perfiles:
+        c.accion("Perfil", perfil.name)
 
-    escritos = 0
-    for carpeta in destinos:
-        fichero = carpeta / "policies.json"
-        # Fusionar: si ya hay politicas puestas a mano, no se pisan.
-        actual: dict = {}
-        if fichero.is_file():
+        # --- pestañas a la izquierda ---
+        destino = perfil / "user.js"
+        lineas = "".join(f'user_pref("{k}", {json.dumps(v)});\n' for k, v in prefs.items())
+        cabecera = ("// Generado por LGW_installer.py\n"
+                    "// Pestañas verticales nativas (Firefox 136+) y sideload de xpi.\n")
+        previo = destino.read_text(errors="replace") if destino.is_file() else ""
+        if previo.startswith(cabecera) and lineas in previo:
+            c.info("pestañas a la izquierda ya configuradas")
+        else:
+            c.accion("Configurando", "pestañas a la izquierda")
+            if not x.dry_run:
+                # Conservar lo que el usuario tuviera puesto a mano.
+                conservado = "\n".join(
+                    l for l in previo.splitlines()
+                    if not any(f'"{k}"' in l for k in prefs) and not l.startswith("//"))
+                destino.write_text(cabecera + lineas
+                                   + (conservado.strip() + "\n" if conservado.strip() else ""))
+
+        # --- extensiones: el xpi va en <perfil>/extensions/<id>.xpi ---
+        carpeta = perfil / "extensions"
+        if not x.dry_run:
+            carpeta.mkdir(parents=True, exist_ok=True)
+        for e in exts:
+            xpi = carpeta / f"{e['id']}.xpi"
+            if xpi.is_file() and xpi.stat().st_size > 0:
+                c.saltado(f"{e['nombre']} ya instalada")
+                yaestaban += 1
+                continue
+            c.accion("Instalando", e["nombre"])
+            if x.dry_run:
+                puestas += 1
+                continue
             try:
-                actual = json.loads(fichero.read_text())
-            except json.JSONDecodeError:
-                c.aviso(f"{fichero} no es JSON valido; se reescribe")
-        pol = actual.setdefault("policies", {})
-        pol.setdefault("ExtensionSettings", {}).update(ajustes)
+                datos = abrir(f"{AMO}/{e['slug']}/latest.xpi", timeout=180).read()
+            except urllib.error.URLError as err:
+                c.error(f"{e['nombre']}: {err.reason}")
+                x.fallos += 1
+                continue
+            if not datos[:2] == b"PK":
+                c.error(f"{e['nombre']}: lo descargado no es un xpi")
+                x.fallos += 1
+                continue
+            xpi.write_bytes(datos)
+            c.ok(f"{e['nombre']} ({len(datos) // 1024} KB)")
+            puestas += 1
 
-        texto = json.dumps(actual, indent=2, ensure_ascii=False) + "\n"
-        c.accion("Escribiendo", str(fichero))
-        if x.dry_run:
-            escritos += 1
-            continue
-        tmp = Path(tempfile.mkstemp(suffix=".json")[1])
-        tmp.write_text(texto)
-        try:
-            x.correr(["install", "-D", "-m", "0644", str(tmp), str(fichero)], root=True)
-            escritos += 1
-        except Fallo as err:
-            c.aviso(f"{fichero}: {err}")
-        finally:
-            tmp.unlink(missing_ok=True)
-
-    if escritos:
-        c.ok(f"{len(exts)} extensiones declaradas en {escritos} ruta"
-             f"{'s' if escritos != 1 else ''} de politicas")
-        c.info("Firefox las descarga e instala al proximo arranque")
-    else:
-        raise Fallo("no se pudo escribir ninguna politica de Firefox")
+    if puestas:
+        c.ok(f"{puestas} extensiones de Firefox puestas")
+    if yaestaban:
+        c.info(f"{yaestaban} ya estaban")
+    c.info("Firefox las activa al proximo arranque; reinicialo si esta abierto")
 
 
 def _remapear_monitor(contenido: str, monitor: str | None) -> tuple[str, str | None]:
@@ -948,6 +856,39 @@ def _ajustar_temas(contenido: str) -> tuple[str, list[str]]:
     return contenido, avisos
 
 
+def _claves_del_ini(ruta: str, contenido: str) -> dict[str, str]:
+    """Aplana un .ini de dconf a {ruta_completa: valor}."""
+    claves: dict[str, str] = {}
+    seccion = ""
+    for linea in contenido.splitlines():
+        linea = linea.strip()
+        if not linea or linea.startswith("#"):
+            continue
+        if linea.startswith("[") and linea.endswith("]"):
+            dentro = linea[1:-1]
+            seccion = "" if dentro == "/" else dentro.strip("/") + "/"
+            continue
+        if "=" not in linea:
+            continue
+        k, v = linea.split("=", 1)
+        claves[f"{ruta}{seccion}{k.strip()}"] = v.strip()
+    return claves
+
+
+def _rama_ya_igual(ruta: str, contenido: str) -> tuple[bool, list[str]]:
+    """Compara lo que escribiriamos con lo que hay puesto ahora.
+
+    Sirve para no pisar en silencio los ajustes que el usuario haya tocado
+    en la maquina destino: si difieren, se pregunta."""
+    distintas = []
+    for clave, valor in _claves_del_ini(ruta, contenido).items():
+        actual = subprocess.run(["dconf", "read", clave],
+                                capture_output=True, text=True).stdout.strip()
+        if actual != valor:
+            distintas.append(f"{clave.rsplit('/', 1)[-1]}: {actual or '(sin valor)'} → {valor}")
+    return not distintas, distintas
+
+
 def paso_dconf(x: Ctx) -> None:
     c = x.c
     ramas = ramas_objetivo()
@@ -961,6 +902,7 @@ def paso_dconf(x: Ctx) -> None:
         capture_output=True, text=True).stdout.strip().strip("[]").replace("'", "").split(", ")) - {""}
     perfil = x.perfil
     mapa = perfil.get("uuid_sistema", {})
+    aplicadas = 0
 
     for fichero, ruta in ramas:
         contenido = fichero.read_text().replace(MARCADOR_HOME, str(Path.home()))
@@ -986,7 +928,7 @@ def paso_dconf(x: Ctx) -> None:
                 c.aviso(f"sin icono en la barra (no instalado): {', '.join(faltan)}")
                 x.notas.append(
                     f"no se anclaron {', '.join(faltan)} porque no estan instalados; "
-                    "instalalos y repite el paso 'ajustes'")
+                    "instalalos y vuelve a lanzar el instalador")
 
         if "enabled-extensions=" in contenido:
             contenido, ausentes, apagadas = _fusionar_habilitadas(
@@ -1014,9 +956,29 @@ def paso_dconf(x: Ctx) -> None:
             if nota:
                 c.aviso(nota)
                 x.notas.append(nota)
+        # Si la rama ya esta igual no se toca; si difiere se pregunta, salvo
+        # con -c o -y. Asi una extension ya configurada a mano no se pisa sin
+        # avisar.
+        igual, distintas = _rama_ya_igual(ruta, contenido)
+        if igual:
+            c.saltado(f"{etiqueta} ya tiene esta configuracion")
+            continue
+        if not x.dry_run and not x.reconfigurar:
+            c.aviso(f"{etiqueta} ya existe con otra configuracion "
+                    f"({len(distintas)} clave{'s' if len(distintas) != 1 else ''} distinta"
+                    f"{'s' if len(distintas) != 1 else ''})")
+            for d in distintas[:6]:
+                c.info(d)
+            if len(distintas) > 6:
+                c.info(f"... y {len(distintas) - 6} mas")
+            if not c.preguntar(f"¿Ajustar la configuracion de {etiqueta}?", por_defecto=True):
+                c.saltado(f"{etiqueta} se deja como estaba")
+                continue
+
         c.accion("Aplicando", f"{etiqueta}  → {ruta}")
         x.correr(["dconf", "load", ruta], entrada=contenido)
-    c.ok(f"{len(ramas)} ramas de dconf aplicadas")
+        aplicadas += 1
+    c.ok(f"{aplicadas} de {len(ramas)} ramas de dconf aplicadas")
 
 
 def paso_retoques(x: Ctx) -> None:
@@ -1157,103 +1119,11 @@ def revertir(c: Consola, asumir_si: bool, dry_run: bool) -> int:
     return 1 if fallos else 0
 
 
-def diagnosticar(c: Consola) -> int:
-    """Comprueba pieza por pieza por que no se instalan las extensiones."""
-    c.titulo("LGW · diagnostico de extensiones")
-
-    nombre, perfil = detectar_distro()
-    c.entrada("Distro", f"{nombre} → perfil '{perfil.get('nombre', '?')}'")
-    try:
-        ver = version_shell()
-    except Fallo as e:
-        c.error(str(e))
-        return 1
-    c.entrada("GNOME Shell", ver)
-    c.entrada("Sesion", f"{os.environ.get('XDG_CURRENT_DESKTOP', '?')} / "
-                        f"{os.environ.get('XDG_SESSION_TYPE', '?')}")
-    c.entrada("Python", sys.version.split()[0])
-    c.entrada("gnome-extensions", shutil.which("gnome-extensions") or "NO ENCONTRADO")
-    c.entrada("glib-compile-schemas", shutil.which("glib-compile-schemas") or "NO ENCONTRADO")
-    carpeta = Path.home() / ".local/share/gnome-shell/extensions"
-    c.entrada("Carpeta destino", f"{carpeta} ({'existe' if carpeta.is_dir() else 'no existe'})")
-
-    c.paso("Extensiones que ve GNOME ahora")
-    for u in sorted(extensiones_instaladas()):
-        c.info(u)
-
-    c.paso("Prueba real con una sola extension")
-    uuid = "caffeine@patapon.info"
-    url = f"{EGO}/extension-info/?uuid={urllib.parse.quote(uuid)}&shell_version={ver}"
-    c.accion("Consultando", url)
-    try:
-        info = json.loads(abrir(url, timeout=20).read())
-        c.ok(f"la API responde: v{info.get('version')} · {info.get('download_url')}")
-    except urllib.error.HTTPError as e:
-        c.error(f"HTTP {e.code} — la API rechaza la peticion")
-        c.info("si es 404, no hay build de esa extension para GNOME " + ver)
-        return 1
-    except urllib.error.URLError as e:
-        c.error(f"sin conexion: {e.reason}")
-        c.info("la VM no llega a extensions.gnome.org (DNS, proxy o sin red)")
-        return 1
-    except json.JSONDecodeError:
-        c.error("la respuesta no es JSON (un portal cautivo o un proxy por medio)")
-        return 1
-
-    c.accion("Descargando", EGO + info["download_url"])
-    try:
-        datos = abrir(EGO + info["download_url"], timeout=120).read()
-        c.ok(f"{len(datos) // 1024} KB descargados")
-    except urllib.error.URLError as e:
-        c.error(f"la descarga falla: {e.reason}")
-        return 1
-
-    with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as f:
-        f.write(datos)
-        tmp = f.name
-    try:
-        try:
-            with zipfile.ZipFile(tmp) as z:
-                c.ok(f"el zip es valido ({len(z.namelist())} ficheros)")
-        except zipfile.BadZipFile:
-            c.error("lo descargado no es un zip valido")
-            return 1
-
-        c.accion("Instalando", "con gnome-extensions install --force")
-        r = subprocess.run(["gnome-extensions", "install", "--force", tmp],
-                           capture_output=True, text=True)
-        if r.returncode == 0:
-            c.ok("instalada correctamente")
-        else:
-            c.error(f"codigo {r.returncode}")
-            for linea in (r.stderr or r.stdout or "").strip().splitlines():
-                c.info(linea)
-            c.info("el instalador probaria entonces a descomprimir a mano")
-    finally:
-        Path(tmp).unlink(missing_ok=True)
-
-    c.paso("Resultado")
-    en_disco = (Path.home() / ".local/share/gnome-shell/extensions" / uuid
-                / "metadata.json").is_file()
-    via_shell = uuid in subprocess.run(["gnome-extensions", "list"],
-                                       capture_output=True, text=True).stdout.split()
-    c.entrada("En disco", "sí" if en_disco else "NO")
-    c.entrada("La ve el Shell", "sí" if via_shell else "no (normal hasta reiniciar sesion)")
-    if en_disco:
-        c.ok("la cadena completa funciona: la extension esta instalada")
-        if not via_shell:
-            c.info("el Shell no la vera hasta que cierres sesion; no es un error")
-    else:
-        c.error("nada en disco: aqui si hay un problema real de instalacion")
-    return 0
-
-
 # ---------------------------------------------------------------------------
 # cli
 # ---------------------------------------------------------------------------
 
 def construir_parser() -> argparse.ArgumentParser:
-    nombres = ", ".join(n for n, _, _ in PASOS)
     return argparse.ArgumentParser(
         prog="LGW_installer.py",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1265,8 +1135,6 @@ def construir_parser() -> argparse.ArgumentParser:
             "Antes de tocar nada guarda un respaldo, asi que --revert siempre\n"
             "puede devolver la maquina al estado en que estaba."),
         epilog=(
-            f"Pasos disponibles para --only y --skip:\n  {nombres}\n"
-            "\n"
             "Ejemplos:\n"
             "  python3 LGW_installer.py\n"
             "      Pregunta si quieres instalarlo todo y lo hace.\n"
@@ -1280,15 +1148,12 @@ def construir_parser() -> argparse.ArgumentParser:
             "  python3 LGW_installer.py -r\n"
             "      Deshace la instalacion y vuelve al estado anterior.\n"
             "\n"
-            "  python3 LGW_installer.py -d\n"
-            "      Diagnostica por que fallan las extensiones y para donde.\n"
-            "\n"
+
             "  python3 LGW_installer.py -n\n"
             "      Enseña lo que haria sin tocar nada.\n"
             "\n"
-            "  python3 LGW_installer.py --only extensiones,ajustes -v\n"
-            "      Solo extensiones y configuracion, enseñando el detalle de cada\n"
-            "      comando. Util para diagnosticar por que falla algo.\n"
+            "  python3 LGW_installer.py -c\n"
+            "      Si algo ya esta con otra configuracion, la ajusta sin preguntar.\n"
             "\n"
             "Al terminar hay que cerrar sesion y volver a entrar para que GNOME\n"
             "cargue las extensiones nuevas."),
@@ -1304,17 +1169,11 @@ def main() -> int:
                    help="deshacer la instalacion y volver al estado anterior")
     p.add_argument("-n", "--dry-run", action="store_true",
                    help="simular sin modificar el sistema")
-    p.add_argument("--only", metavar="PASOS", help="ejecutar solo estos pasos (comas)")
-    p.add_argument("--skip", metavar="PASOS", help="ejecutar todo menos estos pasos (comas)")
+    p.add_argument("-c", "--configurar", action="store_true", dest="reconfigurar",
+                   help="si algo ya esta instalado con otra configuracion, ajustarla "
+                        "sin preguntar")
     p.add_argument("-so", "--so", metavar="SISTEMA", dest="so",
                    help="indicar el sistema (Kali o Ubuntu) y no preguntarlo")
-    p.add_argument("--dialogos", action="store_true",
-                   help="instalar las extensiones a traves de GNOME Shell: quedan "
-                        "activas sin cerrar sesion, a cambio de confirmar un "
-                        "dialogo por extension")
-    p.add_argument("-d", "--diagnose", action="store_true",
-                   help="comprobar paso a paso por que fallan las extensiones")
-    p.add_argument("-l", "--list-steps", action="store_true", help="listar los pasos y salir")
     p.add_argument("-v", "--verbose", action="store_true",
                    help="mostrar la salida de los comandos que se ejecutan")
     p.add_argument("--no-color", action="store_true",
@@ -1322,15 +1181,6 @@ def main() -> int:
     args = p.parse_args()
 
     c = Consola(color=False if args.no_color else None, verboso=args.verbose)
-
-    if args.list_steps:
-        c.titulo("LGW · pasos del instalador")
-        for nombre, desc, _ in PASOS:
-            c.entrada(nombre, desc)
-        return 0
-
-    if args.diagnose:
-        return diagnosticar(c)
 
     if args.revert:
         return revertir(c, args.yes, args.dry_run)
@@ -1348,26 +1198,16 @@ def main() -> int:
         c.saltado("cancelado")
         return 130
 
-    validos = {n for n, _, _ in PASOS}
-    pedidos = {s.strip() for s in args.only.split(",") if s.strip()} if args.only else None
-    omitidos = {s.strip() for s in (args.skip or "").split(",") if s.strip()}
-    for s in (pedidos or set()) | omitidos:
-        if s not in validos:
-            c.error(f"paso desconocido: '{s}' (validos: {', '.join(sorted(validos))})")
-            return 2
-    pasos = [q for q in PASOS
-             if (pedidos is None or q[0] in pedidos) and q[0] not in omitidos]
-
-    c.info("se van a ejecutar estas fases: " + ", ".join(n for n, _, _ in pasos))
+    c.info("fases: " + ", ".join(n for n, _, _ in PASOS))
     if not args.yes and not args.dry_run:
         if not c.preguntar("¿Instalar y configurar todo el escritorio?", por_defecto=True):
             c.saltado("cancelado por el usuario")
             return 130
 
-    x = Ctx(c, args.dry_run, args.dialogos)
+    x = Ctx(c, args.dry_run, args.reconfigurar or args.yes)
     x.so, x.perfil = so, perfil
-    c.plan(len(pasos))
-    for nombre, desc, fn in pasos:
+    c.plan(len(PASOS))
+    for nombre, desc, fn in PASOS:
         c.paso(desc)
         try:
             fn(x)

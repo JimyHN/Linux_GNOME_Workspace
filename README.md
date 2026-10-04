@@ -27,9 +27,7 @@ solo.
 
 **Al terminar hay que cerrar sesión y volver a entrar** para que GNOME cargue
 las extensiones. Es la única cosa que tienes que hacer tú: el Shell solo las
-escanea al arrancar. Si prefieres no cerrar sesión, `--dialogos` se lo pide a
-GNOME y quedan activas al momento, pero tendrás que confirmar un diálogo por
-extensión.
+escanea al arrancar.
 
 > No lo ejecutes con `sudo`: la configuración es del usuario. El script pide
 > `sudo` por su cuenta solo para instalar paquetes.
@@ -77,23 +75,23 @@ en `/etc/apt/keyrings` (nada de `apt-key`).
 
 **Firefox** con las pestañas a la izquierda y tres extensiones: Wappalyzer,
 Container proxy y Firefox Multi-Account Containers. Las pestañas verticales
-son nativas desde Firefox 136; las extensiones se declaran por política
-empresarial, así que Firefox las instala solo al arrancar.
+son nativas desde Firefox 136, y las extensiones se instalan solas al
+siguiente arranque, sin diálogos ni sudo.
 
 ## Opciones
 
 ```
-python3 LGW_installer.py -h                       # ayuda con ejemplos
-python3 LGW_installer.py -y                       # sin preguntar
-python3 LGW_installer.py -r                       # deshacer la instalación
-python3 LGW_installer.py -n                       # simular, no toca nada
-python3 LGW_installer.py --only extensiones,ajustes
-python3 LGW_installer.py --skip sublime
-python3 LGW_installer.py -so Kali                 # sin preguntar el sistema
-python3 LGW_installer.py --dialogos               # extensiones activas sin cerrar sesión
-python3 LGW_installer.py -d                       # diagnosticar extensiones
-python3 LGW_installer.py -l                       # listar los pasos
+python3 LGW_installer.py -h           # ayuda con ejemplos
+python3 LGW_installer.py -y           # sin preguntar nada
+python3 LGW_installer.py -r           # deshacer la instalación
+python3 LGW_installer.py -n           # simular, no toca nada
+python3 LGW_installer.py -c           # reconfigurar sin preguntar
+python3 LGW_installer.py -so Kali     # sin preguntar el sistema
 ```
+
+Siempre ejecuta todo de una pasada. Si algo ya está instalado lo dice y
+sigue; y si está instalado **con otra configuración**, te enseña las
+diferencias y pregunta si la ajusta. Con `-c` la ajusta sin preguntar.
 
 ## Deshacer
 

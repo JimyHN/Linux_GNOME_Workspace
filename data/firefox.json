@@ -1,19 +1,23 @@
 {
   "_comentario": [
-    "Pestanas verticales: desde Firefox 136 son nativas y basta con estas",
-    "dos prefs. No hace falta userChrome.css. Van en user.js del perfil",
-    "porque la politica Preferences de Firefox no admite el prefijo",
-    "'sidebar.' (su lista blanca solo cubre browser., dom., extensions.,",
-    "network., ui. y unos pocos mas).",
+    "Pestanas verticales: desde Firefox 136 son nativas y basta con",
+    "sidebar.revamp y sidebar.verticalTabs. No hace falta userChrome.css.",
     "",
-    "Extensiones: se instalan por politica empresarial, que es la unica",
-    "forma sin clics. Desde Firefox 74 no se puede dejar un .xpi en el",
-    "perfil: el sideload esta desactivado. installation_mode normal_installed",
-    "las instala pero deja desinstalarlas; force_installed lo impediria."
+    "extensions.autoDisableScopes=0 es lo que permite instalar extensiones",
+    "dejando el .xpi en <perfil>/extensions/<id>.xpi. Sin esa pref Firefox",
+    "las deja desactivadas esperando que el usuario las apruebe. Es la unica",
+    "via sin sudo y sin clics: la politica empresarial en /etc/firefox",
+    "necesita root, y el sideload desde el directorio de la aplicacion esta",
+    "desactivado desde Firefox 74. Comprobado en Firefox 157: la extension",
+    "queda active=True con location=app-profile.",
+    "",
+    "El id tiene que ser exactamente el guid de la extension, porque es el",
+    "nombre que Firefox espera en el fichero .xpi."
   ],
   "prefs": {
     "sidebar.revamp": true,
-    "sidebar.verticalTabs": true
+    "sidebar.verticalTabs": true,
+    "extensions.autoDisableScopes": 0
   },
   "extensiones": [
     {

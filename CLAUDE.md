@@ -172,17 +172,17 @@ huecos y listados en el mismo orden en `custom-keybindings`: GNOME ignora
 toda entrada cuya ruta no aparezca ahí. Al quitar uno hay que renumerar los
 siguientes.
 
-## Instalar extensiones: las dos vías
+## Extensiones de GNOME: descarga directa
 
-**Por defecto**: descarga directa del zip. Cero clics, pero hay que cerrar
-sesión al final porque el Shell solo escanea extensiones al arrancar.
+Se baja el zip y se instala. Cero clics, pero hay que **cerrar sesión** al
+final porque el Shell solo escanea extensiones al arrancar.
 
-**`--dialogos`**: se lo pide al Shell con
-`org.gnome.Shell.Extensions.InstallRemoteExtension`, igual que el interruptor
-de extensions.gnome.org. Quedan cargadas al momento, a cambio de confirmar un
-diálogo por extensión.
+La alternativa era `org.gnome.Shell.Extensions.InstallRemoteExtension`, que
+las deja cargadas al momento pero abre un diálogo de confirmación por
+extensión. Se descartó: siete diálogos son más trabajo que un cierre de
+sesión.
 
-No hay una tercera vía, y está comprobado:
+Lo que no funciona, y está comprobado:
 
 - poner los ficheros en `~/.local/share/gnome-shell/extensions` no basta: el
   Shell no los ve hasta reiniciar;
@@ -227,19 +227,19 @@ política: la lista blanca de la política `Preferences` no incluye el prefijo
 Los perfiles se leen de `profiles.ini`, no listando carpetas, y el `user.js`
 se reescribe conservando las líneas que no sean nuestras.
 
-**Extensiones**: política empresarial en `/etc/firefox/policies/policies.json`
-(y la variante `firefox-esr` de Kali), con `ExtensionSettings` e
-`installation_mode: normal_installed`. Es la única forma sin clics: desde
-Firefox 74 no vale dejar un `.xpi` en el perfil porque el sideload está
-desactivado. Se usa `normal_installed` y no `force_installed` para que se
-puedan desinstalar a mano.
+**Extensiones**: el `.xpi` se deja en `<perfil>/extensions/<guid>.xpi` y se
+pone `extensions.autoDisableScopes` a `0`. Sin esa pref Firefox las deja
+desactivadas esperando aprobación manual. El nombre del fichero tiene que ser
+el guid exacto.
 
-El fichero se **fusiona**, no se sobrescribe: si hay políticas puestas por
-otro motivo, se conservan.
+Comprobado en Firefox 157 con un perfil desechable: la extensión queda
+`active=True` con `location=app-profile`. **No requiere sudo**, que es lo que
+descarta la alternativa: la política empresarial en `/etc/firefox/policies`
+necesita root, y en un entorno sin tty `sudo` falla con
+`a terminal is required to authenticate`.
 
-Requiere sudo. El snap de Ubuntu lee `/etc/firefox` porque tiene conectada la
-interfaz `system-files` llamada `etc-firefox`; compruébalo con
-`snap connections firefox` si deja de funcionar.
+Lo que sí está muerto desde Firefox 74 es el sideload desde el directorio de
+la *aplicación*; el del perfil sigue vivo.
 
 ## Iconos de la barra
 
@@ -270,6 +270,27 @@ tarde. **Los mensajes de sudo están traducidos**, así que la lista de patrones
 cubre las dos formas: `3 incorrect password attempts` y `3 intentos
 incorrectos de contraseña`. Si añades patrones, añade los dos idiomas.
 
+## No se pisa lo que ya está configurado
+
+`paso_dconf` compara cada rama con lo que hay puesto antes de escribir, clave
+por clave, con `_rama_ya_igual()`:
+
+- idéntica → se informa y se salta;
+- distinta → se enumeran las diferencias y se pregunta;
+- con `-c` o `-y` → se ajusta sin preguntar.
+
+Así una extensión que el usuario haya retocado en la máquina destino no se
+sobrescribe en silencio.
+
+## Un solo flujo
+
+El instalador ejecuta **siempre los ocho pasos**. No hay `--only`, `--skip`
+ni `--list-steps`: se quitaron a petición. Las banderas son `-h`, `-y`, `-r`,
+`-n`, `-c`, `-so`, `-v` y `--no-color`, y no se añaden más sin pedirlo.
+
+Un paso que encuentra su trabajo ya hecho lo dice y sigue; no falla ni obliga
+a invocarlo aparte.
+
 ## Reglas de trabajo
 
 **El instalador no se ejecuta con sudo.** La configuración es del usuario; con
@@ -282,9 +303,9 @@ aborta. Para apt llama a `sudo` por dentro.
 -f` al acabar. Nunca pruebes contra las ramas reales.
 
 **Todo paso nuevo va en `PASOS`.** La lista de tuplas
-`(nombre, descripción, función)` alimenta la ejecución, `--only`, `--skip` y
-`--list-steps` a la vez. Un paso recibe un `Ctx` y lanza `Fallo` para abortar
-solo ese paso; cualquier otra excepción tumba el instalador.
+`(nombre, descripción, función)` es lo que se ejecuta, en ese orden. Un paso
+recibe un `Ctx` y lanza `Fallo` para abortar solo ese paso; cualquier otra
+excepción tumba el instalador.
 
 **Todo paso que modifique algo tiene que ser reversible.** `paso_respaldo`
 fotografía las ramas de dconf antes de tocarlas y `--revert` las restaura.
