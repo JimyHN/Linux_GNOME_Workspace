@@ -25,8 +25,10 @@ Capturado el 2026-10-04 (ver `data/extensions.json` → `capturado_en`):
 | GNOME Shell | 50.1 |
 | Sesión | Wayland |
 | Tema | Yaru-magenta-dark, acento `pink`, `prefer-dark` |
+| Teclado | `xkb es` |
 | Extensiones de usuario | 9 (se descargan de extensions.gnome.org) |
 | Extensiones del sistema | 7 (vienen en `gnome-shell-ubuntu-extensions`) |
+| Ramas de dconf | 19 ficheros, 160 claves |
 
 El instalador **no** fija la versión de GNOME: pide a extensions.gnome.org la
 build correspondiente al Shell de la máquina destino. Así el repo no caduca
@@ -41,6 +43,7 @@ lgw/ui.py                 Salida en color, compartida por los dos.
 data/
   extensions.json         Extensiones de usuario + entorno de captura
   dconf/*.ini             Una rama de dconf por fichero
+  backgrounds/            Fondos a los que apuntan las claves picture-uri
   burn-my-windows/*.conf  Perfiles de efectos
 ```
 
@@ -57,8 +60,14 @@ pueda desincronizarse.
 hot-sensors=['_system_load_1m_', '_memory_usage_']
 ```
 
-El prefijo numérico fija el orden de aplicación: `00-` escritorio, `10-`
-atajos, `30-ext-` extensiones.
+El prefijo numérico fija el orden de aplicación: `00-`–`07-` escritorio,
+`10-`–`13-` atajos, `30-ext-` extensiones.
+
+Dos capturas que parecen redundantes y no lo son: `12-mutter` toma la rama
+**entera**, no solo `keybindings/`, porque `edge-tiling` vive en la raíz y
+`tiling-assistant` lo da por hecho (lo apunta en su `overridden-settings`).
+Y `05-input-sources` lleva la distribución de teclado: sin ella la VM
+arranca en US y es de las cosas más molestas de arreglar a mano.
 
 ## Lo que no se transfiere tal cual
 
@@ -73,9 +82,15 @@ cinco claves** y conserva las otras 33 (colores, estilo de los puntos,
 márgenes), porque un panel con el color correcto y tamaño por defecto es mejor
 que uno sin configurar.
 
-**Rutas absolutas.** `burn-my-windows` guarda en dconf la ruta completa de su
-perfil activo, con el nombre de usuario dentro. `paso_retoques()` copia el
-`.conf` y reescribe la clave.
+**Rutas absolutas.** Varias claves guardan rutas con el nombre de usuario
+dentro: el `active-profile` de `burn-my-windows` y los `picture-uri` del
+fondo y la pantalla de bloqueo. El exportador las deja como `@LGW_HOME@`
+(`anonimizar()`) y `paso_dconf()` las resuelve al cargar, así el repo público
+no lleva el usuario y la ruta vale en cualquier máquina.
+
+**Orden de los fondos.** `paso_fondos` va **antes** que `paso_dconf` a
+propósito: si se escribe `picture-uri` apuntando a un fichero que todavía no
+existe, el escritorio se queda en negro hasta el siguiente arranque.
 
 **Extensiones huérfanas.** Desinstalar una extensión deja su UUID en
 `enabled-extensions` y sus ajustes en dconf. El exportador los descarta al

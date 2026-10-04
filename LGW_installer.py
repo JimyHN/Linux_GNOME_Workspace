@@ -286,6 +286,28 @@ def paso_extensiones(x: Ctx) -> None:
     c.info("se activaran al aplicar los ajustes; GNOME las carga tras reiniciar la sesion")
 
 
+def paso_fondos(x: Ctx) -> None:
+    """Deja los fondos en ~/.local/share/backgrounds antes de aplicar dconf.
+
+    Las claves picture-uri apuntan ahi por ruta relativa al home, asi que el
+    fichero tiene que existir antes de que se escriban o el escritorio se
+    queda en negro hasta el siguiente arranque."""
+    c = x.c
+    origen = DATA / "backgrounds"
+    imagenes = sorted(origen.glob("*")) if origen.is_dir() else []
+    if not imagenes:
+        c.saltado("el repo no trae fondos de pantalla")
+        return
+    destino = Path.home() / ".local/share/backgrounds"
+    if not x.dry_run:
+        destino.mkdir(parents=True, exist_ok=True)
+    for img in imagenes:
+        c.accion("Copiando", f"{img.name} → {destino}")
+        if not x.dry_run:
+            shutil.copy2(img, destino / img.name)
+    c.ok(f"{len(imagenes)} fondo{'s' if len(imagenes) != 1 else ''} en su sitio")
+
+
 def paso_dconf(x: Ctx) -> None:
     c = x.c
     carpeta = DATA / "dconf"
@@ -381,6 +403,7 @@ PASOS = [
     ("base",           "Paquetes base", paso_apt_base),
     ("sublime",        "Sublime Text", paso_sublime),
     ("extensiones",    "Extensiones de GNOME Shell", paso_extensiones),
+    ("fondos",         "Fondos de pantalla", paso_fondos),
     ("ajustes",        "Ajustes de escritorio, atajos y extensiones", paso_dconf),
     ("retoques",       "Retoques dependientes de la maquina", paso_retoques),
 ]

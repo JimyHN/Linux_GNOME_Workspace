@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import sys
+import urllib.parse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -25,11 +26,19 @@ DATA = RAIZ / "data"
 
 # Ramas de dconf que se capturan, en el orden en que luego se aplican.
 RAMAS = [
-    ("00-interface",         "/org/gnome/desktop/interface/"),
-    ("01-shell",             "/org/gnome/shell/"),
-    ("10-wm-keybindings",    "/org/gnome/desktop/wm/keybindings/"),
-    ("11-media-keys",        "/org/gnome/settings-daemon/plugins/media-keys/"),
-    ("12-mutter-keybindings", "/org/gnome/mutter/keybindings/"),
+    ("00-interface",      "/org/gnome/desktop/interface/"),
+    ("01-shell",          "/org/gnome/shell/"),
+    ("02-background",     "/org/gnome/desktop/background/"),
+    ("03-screensaver",    "/org/gnome/desktop/screensaver/"),
+    ("04-session",        "/org/gnome/desktop/session/"),
+    ("05-input-sources",  "/org/gnome/desktop/input-sources/"),
+    ("06-peripherals",    "/org/gnome/desktop/peripherals/"),
+    ("07-nautilus",       "/org/gnome/nautilus/"),
+    ("10-wm-keybindings", "/org/gnome/desktop/wm/keybindings/"),
+    ("11-media-keys",     "/org/gnome/settings-daemon/plugins/media-keys/"),
+    # La rama entera, no solo keybindings: edge-tiling vive en la raiz y
+    # tiling-assistant lo da por hecho (lo apunta en overridden-settings).
+    ("12-mutter",         "/org/gnome/mutter/"),
     ("13-shell-keybindings", "/org/gnome/shell/keybindings/"),
 ]
 
@@ -183,6 +192,26 @@ def main() -> int:
         c.accion("Volcados", f"{nombre} ({len(volcado.splitlines())} lineas)")
         if not args.dry_run:
             (destino_dconf / f"30-ext-{nombre}.ini").write_text(texto)
+
+    # --- fondos de pantalla ---------------------------------------------
+    c.paso("Fondos de pantalla")
+    fondos = set()
+    for rama in ("/org/gnome/desktop/background/", "/org/gnome/desktop/screensaver/"):
+        for uri in re.findall(r"picture-uri[^=]*='file://([^']+)'", correr(["dconf", "dump", rama])):
+            f = Path(urllib.parse.unquote(uri))
+            if f.is_file():
+                fondos.add(f)
+    if fondos:
+        destino = DATA / "backgrounds"
+        if not args.dry_run:
+            destino.mkdir(parents=True, exist_ok=True)
+        for f in sorted(fondos):
+            c.accion("Copiado", f"{f.name} ({f.stat().st_size // 1024} KB)")
+            if not args.dry_run:
+                shutil.copy2(f, destino / f.name)
+        c.info("el instalador los dejara en la misma ruta relativa al home")
+    else:
+        c.saltado("el fondo no apunta a ningun fichero local")
 
     # --- perfiles de burn-my-windows ------------------------------------
     c.paso("Perfiles de burn-my-windows")

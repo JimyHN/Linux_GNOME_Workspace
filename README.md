@@ -41,7 +41,10 @@ Dash to Panel, el efecto Glide de Burn My Windows…
 | `Shift`+`Super`+`F` / `V` / `D` / `T` / `K` | Firefox · VS Code · Discord · Thunderbird · Deskflow |
 | `Ctrl`+`Super`+`-` / `,` / `.` | Pantalla derecha · izquierda · ambas |
 
-**Tema**: Yaru-magenta-dark con acento rosa y modo oscuro.
+**Tema y escritorio**: Yaru-magenta-dark con acento rosa y modo oscuro, el
+fondo de pantalla, teclado español, numlock encendido, sin bloqueo de sesión
+ni apagado de pantalla, y `edge-tiling` desactivado para que mande
+Tiling Assistant.
 
 **Sublime Text**, desde el repositorio oficial de sublimehq con la clave GPG
 en `/etc/apt/keyrings` (nada de `apt-key`).
@@ -53,7 +56,7 @@ python3 LGW_installer.py -h                       # ayuda con ejemplos
 python3 LGW_installer.py -y                       # sin preguntar
 python3 LGW_installer.py -n                       # simular, no toca nada
 python3 LGW_installer.py --only extensiones,ajustes
-python3 LGW_installer.py --skip sublime
+python3 LGW_installer.py --skip sublime,fondos
 python3 LGW_installer.py -l                       # listar los pasos
 ```
 
