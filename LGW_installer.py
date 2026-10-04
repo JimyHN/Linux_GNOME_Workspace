@@ -2,12 +2,15 @@
 """Replica en esta maquina el escritorio GNOME definido en data/.
 
 Pensado para una VM recien instalada: clonas el repo, lo ejecutas y te deja
-las extensiones, sus ajustes individuales, los atajos de teclado y Sublime
-Text tal y como estan en el ordenador de referencia.
+las extensiones, sus ajustes individuales, los atajos de teclado, el fondo y
+Sublime Text tal y como estan en el ordenador de referencia.
 
     git clone https://github.com/JimyHN/Linux_GNOME_Workspace.git
     cd Linux_GNOME_Workspace
     python3 LGW_installer.py
+
+Antes de tocar nada guarda un respaldo, asi que siempre se puede deshacer con
+    python3 LGW_installer.py --revert
 """
 
 import argparse
@@ -18,9 +21,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -30,16 +35,14 @@ RAIZ = Path(__file__).resolve().parent
 DATA = RAIZ / "data"
 EGO = "https://extensions.gnome.org"
 
-# Paquetes que hacen falta para el resto del proceso.
+# El respaldo vive fuera del repo: si se guardase dentro, un git clean o un
+# pull con conflictos se lo llevaria por delante justo cuando hace falta.
+RESPALDO = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "LGW"
+MANIFIESTO = RESPALDO / "manifiesto.json"
+
 APT_BASE = ["curl", "unzip", "dconf-cli", "gnome-shell-extension-prefs"]
-# Extensiones que en Ubuntu vienen empaquetadas (ding, tiling-assistant,
-# appindicators...). En otras distros no existe: si falla, se avisa y sigue.
 APT_EXTENSIONES_SISTEMA = ["gnome-shell-ubuntu-extensions"]
 
-# Claves de dash-to-panel indexadas por monitor: su contenido es un JSON
-# cuya clave es el identificador del monitor del equipo de origen y no
-# coincidira con el de la VM.
-# Marcador que LGW_export.py deja en lugar del home del equipo de origen.
 MARCADOR_HOME = "@LGW_HOME@"
 
 D2P_CLAVES_POR_MONITOR = [
@@ -47,24 +50,31 @@ D2P_CLAVES_POR_MONITOR = [
     "panel-positions", "panel-sizes",
 ]
 
+# extensions.gnome.org responde 403 a algunos clientes sin User-Agent.
+CABECERAS = {"User-Agent": "LGW-installer (+https://github.com/JimyHN/Linux_GNOME_Workspace)"}
+
 
 class Fallo(Exception):
     """Error que aborta un paso pero no el instalador entero."""
 
 
+def abrir(url: str, timeout: int = 30):
+    return urllib.request.urlopen(urllib.request.Request(url, headers=CABECERAS), timeout=timeout)
+
+
 # ---------------------------------------------------------------------------
-# utilidades
+# contexto
 # ---------------------------------------------------------------------------
 
 class Ctx:
-    def __init__(self, consola: Consola, dry_run: bool, asumir_si: bool):
+    def __init__(self, consola: Consola, dry_run: bool):
         self.c = consola
         self.dry_run = dry_run
-        self.asumir_si = asumir_si
         self.hechos = 0
-        self.saltados = 0
         self.fallos = 0
         self.notas: list[str] = []
+        self.extensiones_puestas: list[str] = []
+        self.fondos_puestos: list[str] = []
 
     def correr(self, cmd: list[str], *, root: bool = False, entrada: str | None = None,
                tolerante: bool = False) -> str:
@@ -80,25 +90,25 @@ class Ctx:
             if r.stderr:
                 self.c.detalle(r.stderr)
             if not tolerante:
-                raise Fallo((r.stderr or r.stdout or "").strip().splitlines()[-1]
-                            if (r.stderr or r.stdout).strip() else f"codigo {r.returncode}")
+                motivo = (r.stderr or r.stdout or "").strip()
+                raise Fallo(motivo.splitlines()[-1] if motivo else f"codigo {r.returncode}")
         return r.stdout
 
     _sudo_ok: bool | None = None
 
     def _sudo_sin_clave(self) -> bool:
         if Ctx._sudo_ok is None:
-            Ctx._sudo_ok = subprocess.run(
-                ["sudo", "-n", "true"], capture_output=True).returncode == 0
+            Ctx._sudo_ok = subprocess.run(["sudo", "-n", "true"],
+                                          capture_output=True).returncode == 0
         return Ctx._sudo_ok
 
 
-def version_shell() -> str:
-    """Version mayor de GNOME Shell de ESTA maquina.
+# ---------------------------------------------------------------------------
+# utilidades
+# ---------------------------------------------------------------------------
 
-    Se pide a extensions.gnome.org la build correspondiente a la VM, no la
-    version que tenia el equipo de origen: asi el repo no se queda obsoleto
-    cada vez que GNOME sube de version."""
+def version_shell() -> str:
+    """Version mayor de GNOME Shell de ESTA maquina."""
     try:
         salida = subprocess.run(["gnome-shell", "--version"],
                                 capture_output=True, text=True, check=True).stdout
@@ -111,7 +121,6 @@ def version_shell() -> str:
 
 
 def leer_ini(ruta: Path) -> tuple[str, str]:
-    """Devuelve (ruta_dconf, contenido). La ruta va en la cabecera del .ini."""
     texto = ruta.read_text()
     m = re.search(r"^#\s*dconf-path:\s*(\S+)", texto, re.M)
     if not m:
@@ -119,8 +128,15 @@ def leer_ini(ruta: Path) -> tuple[str, str]:
     return m.group(1), texto
 
 
+def ramas_objetivo() -> list[tuple[Path, str]]:
+    """Los .ini de data/dconf con la rama a la que va cada uno."""
+    carpeta = DATA / "dconf"
+    if not carpeta.is_dir():
+        return []
+    return [(f, leer_ini(f)[0]) for f in sorted(carpeta.glob("*.ini"))]
+
+
 def monitor_actual() -> str | None:
-    """Identificador de monitor al estilo dash-to-panel: VENDOR-SERIAL."""
     try:
         salida = subprocess.run(["gdctl", "show"], capture_output=True,
                                 text=True, check=True).stdout
@@ -128,9 +144,14 @@ def monitor_actual() -> str | None:
         return None
     vendor = re.search(r"Vendor:\s*(\S+)", salida)
     serial = re.search(r"Serial:\s*(\S+)", salida)
-    if vendor and serial and vendor.group(1).lower() != "unknown":
+    if vendor and serial and vendor.group(1).lower() not in ("unknown", "n/a"):
         return f"{vendor.group(1)}-{serial.group(1)}"
     return None
+
+
+def extensiones_instaladas() -> set[str]:
+    return set(subprocess.run(["gnome-extensions", "list"],
+                              capture_output=True, text=True).stdout.split())
 
 
 # ---------------------------------------------------------------------------
@@ -142,26 +163,88 @@ def paso_comprobaciones(x: Ctx) -> None:
     if os.geteuid() == 0:
         raise Fallo("no lo ejecutes con sudo: la configuracion es del usuario, "
                     "no de root (el script pedira sudo solo para apt)")
+
     sesion = os.environ.get("XDG_CURRENT_DESKTOP", "")
     if "GNOME" not in sesion.upper():
-        c.aviso(f"la sesion actual es '{sesion or 'desconocida'}', no GNOME; "
-                "los ajustes se escribiran igual pero no se veran hasta entrar en GNOME")
+        c.aviso(f"la sesion actual es '{sesion or 'desconocida'}', no GNOME")
     else:
         c.ok(f"sesion GNOME detectada ({os.environ.get('XDG_SESSION_TYPE', '?')})")
 
     ver = version_shell()
     c.ok(f"GNOME Shell {ver}")
+
+    # Sin estas dos cosas el paso de extensiones no puede hacer nada, y vale
+    # mas decirlo ahora que fallar nueve veces seguidas mas abajo.
+    if not shutil.which("gnome-extensions"):
+        raise Fallo("falta el comando 'gnome-extensions' (paquete gnome-shell); "
+                    "sin el no se pueden instalar extensiones")
+    c.ok("comando gnome-extensions disponible")
+
+    try:
+        with abrir(f"{EGO}/extension-info/?uuid=user-theme%40gnome-shell-extensions"
+                   f".gcampax.github.com&shell_version={ver}", timeout=15):
+            pass
+        c.ok("extensions.gnome.org responde")
+    except urllib.error.HTTPError as e:
+        c.ok(f"extensions.gnome.org responde (HTTP {e.code})")
+    except urllib.error.URLError as e:
+        raise Fallo(f"no hay acceso a extensions.gnome.org ({e.reason}); "
+                    "comprueba la red de la VM antes de seguir")
+
     origen = {}
-    manifiesto = DATA / "extensions.json"
-    if manifiesto.is_file():
-        origen = json.loads(manifiesto.read_text()).get("capturado_en", {})
+    if (DATA / "extensions.json").is_file():
+        origen = json.loads((DATA / "extensions.json").read_text()).get("capturado_en", {})
     if origen.get("gnome_shell", "").split(".")[0] not in ("", ver):
         c.aviso(f"el repo se capturo en GNOME {origen['gnome_shell']} y aqui hay {ver}; "
                 "se pediran las versiones de extension correspondientes a esta")
+
     if not shutil.which("sudo"):
         raise Fallo("hace falta sudo para instalar paquetes")
     if not x._sudo_sin_clave():
         c.info("sudo pedira la contraseña durante la instalacion de paquetes")
+
+
+def paso_respaldo(x: Ctx) -> None:
+    """Fotografia el estado actual antes de tocar nada, para --revert."""
+    c = x.c
+    ramas = ramas_objetivo()
+    if not ramas:
+        raise Fallo("no hay nada en data/dconf/; el repo esta incompleto")
+
+    if MANIFIESTO.is_file():
+        try:
+            previo = json.loads(MANIFIESTO.read_text()).get("fecha", "?")
+            c.info(f"habia un respaldo del {previo}; se conserva el original")
+            c.saltado("no se sobrescribe: el respaldo debe reflejar la maquina virgen")
+            return
+        except json.JSONDecodeError:
+            c.aviso("el respaldo anterior estaba corrupto; se rehace")
+
+    c.accion("Guardando", f"estado actual en {RESPALDO}")
+    if not x.dry_run:
+        (RESPALDO / "dconf").mkdir(parents=True, exist_ok=True)
+
+    guardadas = []
+    for fichero, ruta in ramas:
+        volcado = subprocess.run(["dconf", "dump", ruta],
+                                 capture_output=True, text=True).stdout
+        nombre = fichero.name
+        if not x.dry_run:
+            (RESPALDO / "dconf" / nombre).write_text(volcado)
+        guardadas.append({"fichero": nombre, "ruta": ruta, "vacia": not volcado.strip()})
+        c.detalle(f"{ruta} → {len(volcado.splitlines())} lineas")
+
+    datos = {
+        "fecha": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "gnome_shell": version_shell(),
+        "ramas": guardadas,
+        "extensiones_antes": sorted(extensiones_instaladas()),
+        "extensiones_puestas": [],
+        "fondos_puestos": [],
+    }
+    if not x.dry_run:
+        MANIFIESTO.write_text(json.dumps(datos, indent=2, ensure_ascii=False) + "\n")
+    c.ok(f"{len(guardadas)} ramas respaldadas · deshacer con --revert")
 
 
 def paso_apt_base(x: Ctx) -> None:
@@ -175,7 +258,8 @@ def paso_apt_base(x: Ctx) -> None:
     else:
         c.accion("Instalando", ", ".join(faltan))
         x.correr(["apt-get", "install", "-y", *faltan], root=True)
-        c.ok(f"{len(faltan)} paquete{'s' if len(faltan) != 1 else ''} base instalado{'s' if len(faltan) != 1 else ''}")
+        c.ok(f"{len(faltan)} paquete{'s' if len(faltan) != 1 else ''} base instalado"
+             f"{'s' if len(faltan) != 1 else ''}")
 
     for p in APT_EXTENSIONES_SISTEMA:
         c.accion("Instalando", f"{p} (extensiones de la distro)")
@@ -200,13 +284,10 @@ def paso_sublime(x: Ctx) -> None:
     c.accion("Descargando", "clave GPG de sublimehq")
     if not x.dry_run:
         try:
-            with urllib.request.urlopen(
-                    "https://download.sublimetext.com/sublimehq-pub.gpg", timeout=30) as r:
-                clave = r.read()
+            clave = abrir("https://download.sublimetext.com/sublimehq-pub.gpg").read()
         except urllib.error.URLError as e:
             raise Fallo(f"no se pudo descargar la clave: {e}")
-        armadura = subprocess.run(["gpg", "--dearmor"], input=clave,
-                                  capture_output=True)
+        armadura = subprocess.run(["gpg", "--dearmor"], input=clave, capture_output=True)
         if armadura.returncode != 0:
             raise Fallo("gpg --dearmor fallo al procesar la clave")
         tmp = Path(tempfile.mkstemp(suffix=".gpg")[1])
@@ -216,8 +297,8 @@ def paso_sublime(x: Ctx) -> None:
     c.ok(f"clave en {llavero}")
 
     c.accion("Añadiendo", "repositorio apt/stable de Sublime Text")
-    repo = (f"deb [signed-by={llavero}] https://download.sublimetext.com/ apt/stable/\n")
-    x.correr(["tee", str(lista)], root=True, entrada=repo)
+    x.correr(["tee", str(lista)], root=True,
+             entrada=f"deb [signed-by={llavero}] https://download.sublimetext.com/ apt/stable/\n")
 
     c.accion("Instalando", "sublime-text")
     x.correr(["apt-get", "update", "-qq"], root=True, tolerante=True)
@@ -225,76 +306,125 @@ def paso_sublime(x: Ctx) -> None:
     c.ok("Sublime Text instalado (ejecutable: subl)")
 
 
+def _instalar_zip(x: Ctx, uuid: str, datos: bytes) -> None:
+    """Instala el zip con gnome-extensions y, si falla, a mano.
+
+    'gnome-extensions install' puede no estar disponible o negarse segun la
+    version; descomprimir en ~/.local/share y compilar los schemas hace
+    exactamente lo mismo, asi que no merece la pena rendirse al primer error.
+    """
+    with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as f:
+        f.write(datos)
+        tmp = f.name
+    try:
+        try:
+            x.correr(["gnome-extensions", "install", "--force", tmp])
+            return
+        except Fallo as e:
+            x.c.detalle(f"gnome-extensions install fallo ({e}); se descomprime a mano")
+
+        destino = Path.home() / ".local/share/gnome-shell/extensions" / uuid
+        destino.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(tmp) as z:
+            z.extractall(destino)
+        schemas = destino / "schemas"
+        if schemas.is_dir() and shutil.which("glib-compile-schemas"):
+            x.correr(["glib-compile-schemas", str(schemas)], tolerante=True)
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+
+
 def paso_extensiones(x: Ctx) -> None:
     c = x.c
     manifiesto = DATA / "extensions.json"
     if not manifiesto.is_file():
-        raise Fallo("falta data/extensions.json; ejecuta LGW_export.py en el equipo de origen")
+        raise Fallo("falta data/extensions.json; el repo esta incompleto")
     lista = json.loads(manifiesto.read_text()).get("extensiones_usuario", [])
     if not lista:
         c.saltado("no hay extensiones de usuario que instalar")
         return
 
     ver = version_shell()
-    destino = Path.home() / ".local/share/gnome-shell/extensions"
-    instaladas = set(subprocess.run(["gnome-extensions", "list"],
-                                    capture_output=True, text=True).stdout.split())
-    ok = 0
+    instaladas = extensiones_instaladas()
+    puestas, sin_build, con_error = [], [], []
+
     for e in lista:
         uuid, nombre = e["uuid"], e["nombre"]
         if uuid in instaladas:
             c.saltado(f"{nombre} ya instalada")
             continue
-        c.accion("Instalando", f"{nombre} ({uuid})")
+
+        c.accion("Consultando", f"{nombre}")
+        url = f"{EGO}/extension-info/?uuid={urllib.parse.quote(uuid)}&shell_version={ver}"
         try:
-            url = f"{EGO}/extension-info/?uuid={urllib.parse.quote(uuid)}&shell_version={ver}"
-            with urllib.request.urlopen(url, timeout=30) as r:
-                info = json.loads(r.read())
+            info = json.loads(abrir(url).read())
         except urllib.error.HTTPError as err:
             if err.code == 404:
-                c.aviso(f"{nombre}: no hay version compatible con GNOME {ver}")
-                x.notas.append(f"{nombre} no tiene build para GNOME {ver}; instalala a mano")
-                continue
-            c.error(f"{nombre}: {err}")
-            x.fallos += 1
+                # Puede que la extension exista pero no para esta version de
+                # GNOME. Distinguirlo cambia por completo el consejo a dar.
+                try:
+                    generico = json.loads(abrir(
+                        f"{EGO}/extension-info/?uuid={urllib.parse.quote(uuid)}").read())
+                    compat = ", ".join(sorted(generico.get("shell_version_map", {}),
+                                              key=lambda v: [int(n) for n in v.split(".")]))
+                    c.aviso(f"{nombre}: no hay build para GNOME {ver} "
+                            f"(disponible para {compat or 'ninguna version conocida'})")
+                except (urllib.error.URLError, json.JSONDecodeError, ValueError):
+                    c.aviso(f"{nombre}: no hay build para GNOME {ver}")
+                sin_build.append(nombre)
+            else:
+                c.error(f"{nombre}: HTTP {err.code} al consultar la API")
+                con_error.append(nombre)
             continue
-        except (urllib.error.URLError, json.JSONDecodeError) as err:
-            c.error(f"{nombre}: {err}")
-            x.fallos += 1
+        except urllib.error.URLError as err:
+            c.error(f"{nombre}: sin conexion con extensions.gnome.org ({err.reason})")
+            con_error.append(nombre)
+            continue
+        except json.JSONDecodeError:
+            c.error(f"{nombre}: la API devolvio algo que no es JSON")
+            con_error.append(nombre)
             continue
 
-        c.info(f"v{info['version']} desde extensions.gnome.org")
+        descarga = info.get("download_url")
+        if not descarga:
+            c.aviso(f"{nombre}: la API no da enlace de descarga para GNOME {ver}")
+            sin_build.append(nombre)
+            continue
+
+        c.accion("Instalando", f"{nombre} v{info.get('version', '?')}")
         if x.dry_run:
-            ok += 1
+            puestas.append(uuid)
             continue
         try:
-            with urllib.request.urlopen(EGO + info["download_url"], timeout=120) as r:
-                datos = r.read()
-            with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as f:
-                f.write(datos)
-                zip_tmp = f.name
-            x.correr(["gnome-extensions", "install", "--force", zip_tmp])
-            Path(zip_tmp).unlink(missing_ok=True)
-        except (urllib.error.URLError, Fallo) as err:
+            datos = abrir(EGO + descarga, timeout=120).read()
+            c.detalle(f"{len(datos) // 1024} KB descargados")
+            _instalar_zip(x, uuid, datos)
+        except (urllib.error.URLError, Fallo, zipfile.BadZipFile, OSError) as err:
             c.error(f"{nombre}: {err}")
-            x.fallos += 1
+            con_error.append(nombre)
             continue
-        ok += 1
+        puestas.append(uuid)
 
-    if ok:
-        c.ok(f"{ok} extensiones instaladas en {destino}")
-    c.info("se activaran al aplicar los ajustes; GNOME las carga tras reiniciar la sesion")
+    x.extensiones_puestas = puestas
+    if puestas:
+        c.ok(f"{len(puestas)} extensiones instaladas")
+    if sin_build:
+        x.notas.append(f"sin build para GNOME {ver}: {', '.join(sin_build)}. "
+                       "Instalalas a mano desde extensions.gnome.org o quitalas "
+                       "de data/extensions.json")
+    if con_error:
+        x.fallos += len(con_error)
+        x.notas.append(f"fallaron por red o instalacion: {', '.join(con_error)}. "
+                       "Repite con -v para ver el detalle")
+    if not puestas and not sin_build and not con_error:
+        c.info("no habia nada que instalar: ya estaban todas")
+    c.info("GNOME las carga al reiniciar la sesion, no antes")
 
 
 def paso_fondos(x: Ctx) -> None:
-    """Deja los fondos en ~/.local/share/backgrounds antes de aplicar dconf.
-
-    Las claves picture-uri apuntan ahi por ruta relativa al home, asi que el
-    fichero tiene que existir antes de que se escriban o el escritorio se
-    queda en negro hasta el siguiente arranque."""
     c = x.c
     origen = DATA / "backgrounds"
-    imagenes = sorted(origen.glob("*")) if origen.is_dir() else []
+    imagenes = sorted(p for p in origen.glob("*") if p.is_file()) if origen.is_dir() else []
     if not imagenes:
         c.saltado("el repo no trae fondos de pantalla")
         return
@@ -304,64 +434,83 @@ def paso_fondos(x: Ctx) -> None:
     for img in imagenes:
         c.accion("Copiando", f"{img.name} → {destino}")
         if not x.dry_run:
+            if not (destino / img.name).exists():
+                x.fondos_puestos.append(str(destino / img.name))
             shutil.copy2(img, destino / img.name)
     c.ok(f"{len(imagenes)} fondo{'s' if len(imagenes) != 1 else ''} en su sitio")
 
 
-def paso_dconf(x: Ctx) -> None:
-    c = x.c
-    carpeta = DATA / "dconf"
-    if not carpeta.is_dir():
-        raise Fallo("falta data/dconf/; ejecuta LGW_export.py en el equipo de origen")
-    archivos = sorted(carpeta.glob("*.ini"))
-    if not archivos:
-        raise Fallo("no hay ningun .ini en data/dconf/")
-
-    monitor = monitor_actual()
-    for f in archivos:
-        ruta, contenido = leer_ini(f)
-        contenido = contenido.replace(MARCADOR_HOME, str(Path.home()))
-        etiqueta = f.stem.split("-", 1)[1] if "-" in f.stem else f.stem
-
-        if f.stem.endswith("dash-to-panel"):
-            contenido, nota = _remapear_monitor(contenido, monitor)
-            if nota:
-                c.aviso(nota)
-                x.notas.append(nota)
-
-        c.accion("Aplicando", f"{etiqueta}  → {ruta}")
-        x.correr(["dconf", "load", ruta], entrada=contenido)
-    c.ok(f"{len(archivos)} ramas de dconf aplicadas")
-
-
 def _remapear_monitor(contenido: str, monitor: str | None) -> tuple[str, str | None]:
-    """dash-to-panel guarda tamaño y posicion del panel por monitor.
-
-    El identificador del equipo de origen no existe en la VM, asi que o lo
-    sustituimos por el de aqui o quitamos esas claves para que la extension
-    use sus valores por defecto. Dejarlas intactas haria que el panel se
-    mostrase con el aspecto de serie sin ninguna pista de por que."""
+    """dash-to-panel guarda tamaño y posicion del panel por monitor."""
     claves = "|".join(D2P_CLAVES_POR_MONITOR)
-    origen = set(re.findall(r'"([A-Z0-9]+-[A-Z0-9]+)"\s*:', contenido))
+    origen = set(re.findall(r'"([A-Za-z0-9]+-[A-Za-z0-9]+)"\s*:', contenido))
     if not origen:
         return contenido, None
-
     if monitor:
         for viejo in origen:
             contenido = contenido.replace(f'"{viejo}"', f'"{monitor}"')
         return contenido, None
-
-    # Sin vendor/serial fiables (lo normal en una VM): fuera las claves.
     contenido = re.sub(rf"^({claves})=.*\n", "", contenido, flags=re.M)
     return contenido, ("no se pudo identificar el monitor de esta maquina: el panel de "
                        "dash-to-panel quedara con tamaño y posicion por defecto "
                        "(ajustalo una vez en sus preferencias)")
 
 
+def _filtrar_habilitadas(contenido: str, instaladas: set[str]) -> tuple[str, list[str]]:
+    """Quita de enabled-extensions lo que no este realmente instalado.
+
+    Sin esto, si dash-to-panel no se llega a instalar el load lo pide igual
+    —GNOME lo ignora— pero de paso desactiva ubuntu-dock, que no aparece en
+    la lista porque en el equipo de origen esta apagado a proposito. El
+    resultado es una sesion sin barra y sin dock, peor que no haber tocado
+    nada. Si falta el sustituto, se deja lo que hubiera."""
+    ausentes: list[str] = []
+
+    def _sub(m: re.Match) -> str:
+        uuids = re.findall(r"'([^']+)'", m.group(1))
+        vivas = [u for u in uuids if u in instaladas]
+        ausentes.extend(u for u in uuids if u not in instaladas)
+        if not ausentes:
+            return m.group(0)
+        return "enabled-extensions=[" + ", ".join(f"'{u}'" for u in vivas) + "]"
+
+    return re.sub(r"enabled-extensions=\[(.*?)\]", _sub, contenido), ausentes
+
+
+def paso_dconf(x: Ctx) -> None:
+    c = x.c
+    ramas = ramas_objetivo()
+    if not ramas:
+        raise Fallo("no hay ningun .ini en data/dconf/")
+
+    monitor = monitor_actual()
+    instaladas = extensiones_instaladas()
+    for fichero, ruta in ramas:
+        contenido = fichero.read_text().replace(MARCADOR_HOME, str(Path.home()))
+        etiqueta = fichero.stem.split("-", 1)[1] if "-" in fichero.stem else fichero.stem
+
+        if "enabled-extensions=" in contenido:
+            contenido, ausentes = _filtrar_habilitadas(contenido, instaladas)
+            if ausentes:
+                c.aviso(f"no se habilitan (no instaladas): {', '.join(ausentes)}")
+                x.notas.append(
+                    f"{len(ausentes)} extensiones no se habilitaron porque no estan "
+                    "instaladas. No se ha tocado el dock que ya tenias, asi que no "
+                    "te quedas sin barra: arregla la instalacion y repite el paso "
+                    "'ajustes'")
+
+        if fichero.stem.endswith("dash-to-panel"):
+            contenido, nota = _remapear_monitor(contenido, monitor)
+            if nota:
+                c.aviso(nota)
+                x.notas.append(nota)
+        c.accion("Aplicando", f"{etiqueta}  → {ruta}")
+        x.correr(["dconf", "load", ruta], entrada=contenido)
+    c.ok(f"{len(ramas)} ramas de dconf aplicadas")
+
+
 def paso_retoques(x: Ctx) -> None:
     c = x.c
-    # burn-my-windows guarda la ruta ABSOLUTA de su perfil activo, con el
-    # nombre de usuario del equipo de origen dentro.
     perfiles = DATA / "burn-my-windows"
     if perfiles.is_dir() and any(perfiles.glob("*.conf")):
         destino = Path.home() / ".config/burn-my-windows/profiles"
@@ -382,7 +531,6 @@ def paso_retoques(x: Ctx) -> None:
     else:
         c.saltado("no hay perfiles de burn-my-windows")
 
-    # Los atajos personalizados apuntan a programas que quiza no esten aqui.
     faltan = []
     media = DATA / "dconf" / "11-media-keys.ini"
     if media.is_file():
@@ -397,9 +545,22 @@ def paso_retoques(x: Ctx) -> None:
     else:
         c.ok("todos los programas de los atajos personalizados estan disponibles")
 
+    # Apuntar en el manifiesto lo que este pase ha añadido, para --revert.
+    if not x.dry_run and MANIFIESTO.is_file():
+        try:
+            datos = json.loads(MANIFIESTO.read_text())
+            datos["extensiones_puestas"] = sorted(
+                set(datos.get("extensiones_puestas", [])) | set(x.extensiones_puestas))
+            datos["fondos_puestos"] = sorted(
+                set(datos.get("fondos_puestos", [])) | set(x.fondos_puestos))
+            MANIFIESTO.write_text(json.dumps(datos, indent=2, ensure_ascii=False) + "\n")
+        except json.JSONDecodeError:
+            c.aviso("no se pudo actualizar el manifiesto de respaldo")
+
 
 PASOS = [
     ("comprobaciones", "Comprobaciones previas", paso_comprobaciones),
+    ("respaldo",       "Respaldo del estado actual", paso_respaldo),
     ("base",           "Paquetes base", paso_apt_base),
     ("sublime",        "Sublime Text", paso_sublime),
     ("extensiones",    "Extensiones de GNOME Shell", paso_extensiones),
@@ -410,21 +571,112 @@ PASOS = [
 
 
 # ---------------------------------------------------------------------------
+# revertir
+# ---------------------------------------------------------------------------
+
+def revertir(c: Consola, asumir_si: bool, dry_run: bool) -> int:
+    c.titulo("LGW · deshacer la instalacion")
+
+    if not MANIFIESTO.is_file():
+        c.aviso("todavia no se ha ejecutado el instalador en esta maquina")
+        c.info(f"no hay ningun respaldo en {RESPALDO}")
+        c.info("no hay nada que deshacer")
+        return 1
+
+    try:
+        datos = json.loads(MANIFIESTO.read_text())
+    except json.JSONDecodeError:
+        c.error(f"el respaldo de {MANIFIESTO} esta corrupto; no me fio para restaurar")
+        return 1
+
+    ramas = datos.get("ramas", [])
+    extras = datos.get("extensiones_puestas", [])
+    fondos = datos.get("fondos_puestos", [])
+
+    c.info(f"respaldo del {datos.get('fecha', '?')} (GNOME {datos.get('gnome_shell', '?')})")
+    c.bruto()
+    c.entrada("Restaura", f"{len(ramas)} ramas de dconf al estado anterior")
+    c.entrada("Desinstala", f"{len(extras)} extensiones que puso el instalador"
+                            + (f" ({', '.join(extras)})" if extras else ""))
+    c.entrada("Borra", f"{len(fondos)} fondos de pantalla copiados")
+    c.entrada("NO toca", "los paquetes de apt: Sublime Text y las dependencias se quedan")
+
+    if not asumir_si and not dry_run:
+        if not c.preguntar("¿Volver al estado anterior a la instalacion?", por_defecto=False):
+            c.saltado("cancelado: no se ha tocado nada")
+            return 130
+
+    fallos = 0
+
+    c.paso("Restaurando dconf")
+    for r in ramas:
+        ruta, nombre = r["ruta"], r["fichero"]
+        copia = RESPALDO / "dconf" / nombre
+        c.accion("Restaurando", ruta)
+        if dry_run:
+            continue
+        try:
+            # Primero reset: si no, las claves que el instalador añadio y no
+            # existian antes sobrevivirian al dconf load.
+            subprocess.run(["dconf", "reset", "-f", ruta], check=True, capture_output=True)
+            if copia.is_file() and copia.read_text().strip():
+                subprocess.run(["dconf", "load", ruta], input=copia.read_text(),
+                               text=True, check=True, capture_output=True)
+        except subprocess.CalledProcessError as e:
+            c.error(f"{ruta}: {(e.stderr or b'').decode(errors='replace').strip() or e}")
+            fallos += 1
+    c.ok(f"{len(ramas) - fallos} de {len(ramas)} ramas restauradas")
+
+    if extras:
+        c.paso("Desinstalando extensiones")
+        for uuid in extras:
+            c.accion("Quitando", uuid)
+            if dry_run:
+                continue
+            r = subprocess.run(["gnome-extensions", "uninstall", uuid], capture_output=True)
+            if r.returncode != 0:
+                carpeta = Path.home() / ".local/share/gnome-shell/extensions" / uuid
+                if carpeta.is_dir():
+                    shutil.rmtree(carpeta, ignore_errors=True)
+        c.ok(f"{len(extras)} extensiones desinstaladas")
+
+    if fondos:
+        c.paso("Borrando fondos copiados")
+        for f in fondos:
+            c.accion("Borrando", f)
+            if not dry_run:
+                Path(f).unlink(missing_ok=True)
+        c.ok(f"{len(fondos)} fondos borrados")
+
+    c.paso("Listo")
+    if dry_run:
+        c.aviso("dry-run: no se ha deshecho nada")
+        return 0
+    if fallos:
+        c.aviso(f"{fallos} ramas no se pudieron restaurar; revisa con -v")
+    c.info("cierra sesion y vuelve a entrar para ver el escritorio anterior")
+    c.info(f"el respaldo sigue en {RESPALDO} por si hace falta otra vez")
+    return 1 if fallos else 0
+
+
+# ---------------------------------------------------------------------------
 # cli
 # ---------------------------------------------------------------------------
 
 def construir_parser() -> argparse.ArgumentParser:
     nombres = ", ".join(n for n, _, _ in PASOS)
-    p = argparse.ArgumentParser(
+    return argparse.ArgumentParser(
         prog="LGW_installer.py",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
             "Replica en esta maquina el escritorio GNOME de Linux_GNOME_Workspace:\n"
-            "extensiones con sus ajustes individuales, atajos de teclado, tema y\n"
-            "Sublime Text. Pensado para una VM recien instalada."),
+            "extensiones con sus ajustes individuales, atajos de teclado, fondo,\n"
+            "tema y Sublime Text. Pensado para una VM recien instalada.\n"
+            "\n"
+            "Antes de tocar nada guarda un respaldo, asi que --revert siempre\n"
+            "puede devolver la maquina al estado en que estaba."),
         epilog=(
-            "Pasos disponibles para --only y --skip:\n"
-            f"  {nombres}\n"
+            f"Pasos disponibles para --only y --skip:\n  {nombres}\n"
             "\n"
             "Ejemplos:\n"
             "  python3 LGW_installer.py\n"
@@ -433,48 +685,39 @@ def construir_parser() -> argparse.ArgumentParser:
             "  python3 LGW_installer.py -y\n"
             "      Lo instala todo sin preguntar nada (util por SSH o en un script).\n"
             "\n"
+            "  python3 LGW_installer.py -r\n"
+            "      Deshace la instalacion y vuelve al estado anterior.\n"
+            "\n"
             "  python3 LGW_installer.py -n\n"
             "      Enseña lo que haria sin tocar nada.\n"
             "\n"
-            "  python3 LGW_installer.py --only extensiones,ajustes\n"
-            "      Solo las extensiones y su configuracion, sin Sublime ni apt.\n"
+            "  python3 LGW_installer.py --only extensiones,ajustes -v\n"
+            "      Solo extensiones y configuracion, enseñando el detalle de cada\n"
+            "      comando. Util para diagnosticar por que falla algo.\n"
             "\n"
             "Al terminar hay que cerrar sesion y volver a entrar para que GNOME\n"
             "cargue las extensiones nuevas."),
+        **{"add_help": True},
     )
+
+
+def main() -> int:
+    p = construir_parser()
     p.add_argument("-y", "--yes", action="store_true",
                    help="no preguntar nada: instalar y configurar todo directamente")
+    p.add_argument("-r", "--revert", action="store_true",
+                   help="deshacer la instalacion y volver al estado anterior")
     p.add_argument("-n", "--dry-run", action="store_true",
-                   help="simular la instalacion sin modificar el sistema")
-    p.add_argument("--only", metavar="PASOS",
-                   help="ejecutar solo estos pasos (separados por comas)")
-    p.add_argument("--skip", metavar="PASOS",
-                   help="ejecutar todo menos estos pasos (separados por comas)")
-    p.add_argument("-l", "--list-steps", action="store_true",
-                   help="listar los pasos y salir")
+                   help="simular sin modificar el sistema")
+    p.add_argument("--only", metavar="PASOS", help="ejecutar solo estos pasos (comas)")
+    p.add_argument("--skip", metavar="PASOS", help="ejecutar todo menos estos pasos (comas)")
+    p.add_argument("-l", "--list-steps", action="store_true", help="listar los pasos y salir")
     p.add_argument("-v", "--verbose", action="store_true",
                    help="mostrar la salida de los comandos que se ejecutan")
     p.add_argument("--no-color", action="store_true",
                    help="salida sin color (tambien se respeta NO_COLOR)")
-    return p
+    args = p.parse_args()
 
-
-def seleccionar(args, c: Consola) -> list:
-    validos = {n for n, _, _ in PASOS}
-    pedidos = None
-    if args.only:
-        pedidos = {s.strip() for s in args.only.split(",") if s.strip()}
-    omitidos = {s.strip() for s in (args.skip or "").split(",") if s.strip()}
-    for s in (pedidos or set()) | omitidos:
-        if s not in validos:
-            c.error(f"paso desconocido: '{s}' (validos: {', '.join(sorted(validos))})")
-            sys.exit(2)
-    return [p for p in PASOS
-            if (pedidos is None or p[0] in pedidos) and p[0] not in omitidos]
-
-
-def main() -> int:
-    args = construir_parser().parse_args()
     c = Consola(color=False if args.no_color else None, verboso=args.verbose)
 
     if args.list_steps:
@@ -483,19 +726,30 @@ def main() -> int:
             c.entrada(nombre, desc)
         return 0
 
+    if args.revert:
+        return revertir(c, args.yes, args.dry_run)
+
     c.titulo("LGW · instalador del escritorio GNOME")
     if args.dry_run:
         c.aviso("modo simulacion: no se va a modificar nada")
 
-    pasos = seleccionar(args, c)
-    c.info("se van a ejecutar estas fases: " + ", ".join(n for n, _, _ in pasos))
+    validos = {n for n, _, _ in PASOS}
+    pedidos = {s.strip() for s in args.only.split(",") if s.strip()} if args.only else None
+    omitidos = {s.strip() for s in (args.skip or "").split(",") if s.strip()}
+    for s in (pedidos or set()) | omitidos:
+        if s not in validos:
+            c.error(f"paso desconocido: '{s}' (validos: {', '.join(sorted(validos))})")
+            return 2
+    pasos = [q for q in PASOS
+             if (pedidos is None or q[0] in pedidos) and q[0] not in omitidos]
 
+    c.info("se van a ejecutar estas fases: " + ", ".join(n for n, _, _ in pasos))
     if not args.yes and not args.dry_run:
         if not c.preguntar("¿Instalar y configurar todo el escritorio?", por_defecto=True):
             c.saltado("cancelado por el usuario")
             return 130
 
-    x = Ctx(c, args.dry_run, args.yes)
+    x = Ctx(c, args.dry_run)
     c.plan(len(pasos))
     for nombre, desc, fn in pasos:
         c.paso(desc)
@@ -505,8 +759,8 @@ def main() -> int:
         except Fallo as e:
             c.error(str(e))
             x.fallos += 1
-            if nombre == "comprobaciones":
-                c.error("las comprobaciones previas han fallado; no se continua")
+            if nombre in ("comprobaciones", "respaldo"):
+                c.error(f"'{nombre}' es imprescindible; no se continua")
                 return 1
         except KeyboardInterrupt:
             c.bruto()
@@ -519,8 +773,7 @@ def main() -> int:
         c.aviso(n)
     if not args.dry_run:
         c.info("cierra sesion y vuelve a entrar para que GNOME cargue las extensiones")
-        if os.environ.get("XDG_SESSION_TYPE") == "x11":
-            c.info("en X11 basta con Alt+F2 y escribir 'r'")
+        c.info("si algo no te convence: python3 LGW_installer.py --revert")
     return 1 if x.fallos else 0
 
 

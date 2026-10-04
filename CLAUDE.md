@@ -4,16 +4,17 @@ Replica el escritorio GNOME del ordenador de referencia en una máquina nueva
 (normalmente una VM recién instalada): extensiones con su configuración
 individual, atajos de teclado, tema y Sublime Text.
 
-Son dos scripts que se miran al espejo:
+`LGW_installer.py` lee `data/` y lo aplica. `data/` es la única fuente de
+verdad y **se mantiene a mano**: si cambias algo en el escritorio de
+referencia y lo quieres conservar, vuelca la rama y edita el `.ini`.
 
-| Script | Dónde se ejecuta | Qué hace |
-|---|---|---|
-| `LGW_export.py` | Ordenador de referencia | Lee el sistema y escribe `data/`. Solo lee. |
-| `LGW_installer.py` | VM destino | Lee `data/` y lo aplica. |
+```bash
+dconf dump /org/gnome/shell/extensions/vitals/   # y pégalo bajo la cabecera
+```
 
-`data/` es la única fuente de verdad y se **genera**, no se escribe a mano.
-Si cambias algo en el escritorio de referencia y quieres conservarlo, ejecuta
-`LGW_export.py` y commitea el diff.
+Hubo un `LGW_export.py` que lo generaba solo. Se eliminó a petición: la
+configuración ya está capturada y el mantenimiento manual es suficiente.
+Si lo echas de menos, está en el historial (`git log --diff-filter=D`).
 
 ## Entorno de referencia
 
@@ -38,8 +39,7 @@ cuando Ubuntu sube de versión.
 
 ```
 LGW_installer.py          Instalador. Punto de entrada en la VM.
-LGW_export.py             Exportador. Se ejecuta en el equipo de referencia.
-lgw/ui.py                 Salida en color, compartida por los dos.
+lgw/ui.py                 Salida en color.
 data/
   extensions.json         Extensiones de usuario + entorno de captura
   dconf/*.ini             Una rama de dconf por fichero
@@ -55,7 +55,6 @@ pueda desincronizarse.
 
 ```ini
 # dconf-path: /org/gnome/shell/extensions/vitals/
-# Generado por LGW_export.py — no editar a mano.
 [/]
 hot-sensors=['_system_load_1m_', '_memory_usage_']
 ```
@@ -92,16 +91,20 @@ no lleva el usuario y la ruta vale en cualquier máquina.
 propósito: si se escribe `picture-uri` apuntando a un fichero que todavía no
 existe, el escritorio se queda en negro hasta el siguiente arranque.
 
-**Extensiones huérfanas.** Desinstalar una extensión deja su UUID en
-`enabled-extensions` y sus ajustes en dconf. El exportador los descarta al
-vuelo (`limpiar_enabled()`), por eso `search-light` y `just-perfection`
-aparecen en este escritorio pero no en `data/`.
+**Extensiones que no se llegaron a instalar.** `01-shell.ini` fija
+`enabled-extensions`, y esa lista **no** incluye `ubuntu-dock` porque en el
+equipo de origen está apagado a favor de `dash-to-panel`. Si dash-to-panel
+no se instala y se aplica la lista tal cual, GNOME desactiva el dock y no
+pone nada en su lugar: sesión sin barra y sin dock, peor que no haber tocado
+nada. `_filtrar_habilitadas()` quita de la lista lo que no esté realmente
+instalado, así el dock que hubiera sobrevive. Fue un fallo real en una VM.
+
+**Atajos.** Los `customN` de `11-media-keys.ini` tienen que ir numerados sin
+huecos y listados en el mismo orden en `custom-keybindings`: GNOME ignora
+toda entrada cuya ruta no aparezca ahí. Al quitar uno hay que renumerar los
+siguientes.
 
 ## Reglas de trabajo
-
-**El exportador nunca escribe en el escritorio.** Solo `dconf dump`,
-`gsettings get` y lecturas de `~/.local/share`. Si necesitas añadir una
-captura, que sea de lectura.
 
 **El instalador no se ejecuta con sudo.** La configuración es del usuario; con
 sudo acabaría en el dconf de root y el escritorio no cambiaría. Lo comprueba y
@@ -116,6 +119,15 @@ aborta. Para apt llama a `sudo` por dentro.
 `(nombre, descripción, función)` alimenta la ejecución, `--only`, `--skip` y
 `--list-steps` a la vez. Un paso recibe un `Ctx` y lanza `Fallo` para abortar
 solo ese paso; cualquier otra excepción tumba el instalador.
+
+**Todo paso que modifique algo tiene que ser reversible.** `paso_respaldo`
+fotografía las ramas de dconf antes de tocarlas y `--revert` las restaura.
+Si añades un paso que escribe fuera de dconf, apunta lo que creó en el
+manifiesto (`extensiones_puestas`, `fondos_puestos`) para que `revertir()`
+pueda deshacerlo. El respaldo vive en `$XDG_STATE_HOME/LGW`, **fuera** del
+repo: dentro, un `git clean` se lo llevaría justo cuando hace falta. No se
+sobrescribe en ejecuciones posteriores, porque debe reflejar la máquina
+virgen.
 
 **Los pasos son idempotentes.** Se ejecutan dos veces seguidas sin romper
 nada: comprueban si la extensión ya está, si el paquete ya está instalado.

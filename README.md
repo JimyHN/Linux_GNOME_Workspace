@@ -39,7 +39,8 @@ Dash to Panel, el efecto Glide de Burn My Windows…
 | `Super`+`C` | Configuración |
 | `Super`+`W` | Cerrar ventana |
 | `Shift`+`Super`+`F` / `V` / `D` / `T` / `K` | Firefox · VS Code · Discord · Thunderbird · Deskflow |
-| `Ctrl`+`Super`+`-` / `,` / `.` | Pantalla derecha · izquierda · ambas |
+| `Shift`+`Super`+`B` | BurpSuite |
+| `Ctrl`+`Super`+`.` | Ambas pantallas |
 
 **Tema y escritorio**: Yaru-magenta-dark con acento rosa y modo oscuro, el
 fondo de pantalla, teclado español, numlock encendido, sin bloqueo de sesión
@@ -54,20 +55,35 @@ en `/etc/apt/keyrings` (nada de `apt-key`).
 ```
 python3 LGW_installer.py -h                       # ayuda con ejemplos
 python3 LGW_installer.py -y                       # sin preguntar
+python3 LGW_installer.py -r                       # deshacer la instalación
 python3 LGW_installer.py -n                       # simular, no toca nada
 python3 LGW_installer.py --only extensiones,ajustes
 python3 LGW_installer.py --skip sublime,fondos
 python3 LGW_installer.py -l                       # listar los pasos
 ```
 
-## Actualizar la configuración guardada
+## Deshacer
 
-Cuando cambies algo en el ordenador de referencia:
+El instalador guarda un respaldo antes de tocar nada:
 
 ```bash
-python3 LGW_export.py          # regenera data/
-git diff                       # revísalo: puede traer rutas personales
-git commit -am "export: ..."
+python3 LGW_installer.py --revert     # o -r
+```
+
+Pide confirmación y devuelve el escritorio al estado anterior: restaura las
+ramas de dconf, desinstala las extensiones que puso y borra los fondos que
+copió. **No** desinstala paquetes de apt, así que Sublime Text se queda.
+
+Si nunca has ejecutado el instalador en esa máquina, te lo dice y no hace
+nada.
+
+## Actualizar la configuración guardada
+
+`data/` se mantiene a mano. Para cambiar un ajuste, vuelca la rama y pega el
+resultado bajo la cabecera `# dconf-path:` del `.ini` correspondiente:
+
+```bash
+dconf dump /org/gnome/shell/extensions/vitals/
 ```
 
 ## Qué no viaja igual
