@@ -15,3 +15,7 @@ secrets/
 *.tmp
 *.swp
 *~
+
+# Python
+__pycache__/
+*.pyc

@@ -1,0 +1,62 @@
+{
+  "capturado_en": {
+    "gnome_shell": "50.1",
+    "distro": "Ubuntu 26.04.1 LTS"
+  },
+  "extensiones_usuario": [
+    {
+      "uuid": "blur-my-shell@aunetx",
+      "nombre": "Blur my Shell",
+      "version_origen": 72,
+      "url": "https://github.com/aunetx/blur-my-shell"
+    },
+    {
+      "uuid": "burn-my-windows@schneegans.github.com",
+      "nombre": "Burn My Windows",
+      "version_origen": 49,
+      "url": "https://github.com/Schneegans/Burn-My-Windows"
+    },
+    {
+      "uuid": "caffeine@patapon.info",
+      "nombre": "Caffeine",
+      "version_origen": 60,
+      "url": "https://github.com/eonpatapon/gnome-shell-extension-caffeine"
+    },
+    {
+      "uuid": "clipboard-indicator@tudmotu.com",
+      "nombre": "Clipboard Indicator",
+      "version_origen": 71,
+      "url": "https://github.com/Tudmotu/gnome-shell-extension-clipboard-indicator"
+    },
+    {
+      "uuid": "dash-to-panel@jderose9.github.com",
+      "nombre": "Dash to Panel",
+      "version_origen": 74,
+      "url": "https://github.com/home-sweet-gnome/dash-to-panel"
+    },
+    {
+      "uuid": "gsconnect@andyholmes.github.io",
+      "nombre": "GSConnect",
+      "version_origen": 73,
+      "url": "https://github.com/GSConnect/gnome-shell-extension-gsconnect/wiki"
+    },
+    {
+      "uuid": "show-my-ip@github.com.juliansantosinfo",
+      "nombre": "Show My IP",
+      "version_origen": 3,
+      "url": "https://github.com/juliansantosinfo/gnome-shell-extension-show-my-ip"
+    },
+    {
+      "uuid": "user-theme@gnome-shell-extensions.gcampax.github.com",
+      "nombre": "User Themes",
+      "version_origen": 79,
+      "url": "https://gitlab.gnome.org/GNOME/gnome-shell-extensions"
+    },
+    {
+      "uuid": "Vitals@CoreCoding.com",
+      "nombre": "Vitals",
+      "version_origen": 85,
+      "url": "https://github.com/corecoding/Vitals"
+    }
+  ]
+}
