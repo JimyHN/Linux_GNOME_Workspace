@@ -40,8 +40,9 @@ EGO = "https://extensions.gnome.org"
 RESPALDO = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "LGW"
 MANIFIESTO = RESPALDO / "manifiesto.json"
 
-APT_BASE = ["curl", "unzip", "dconf-cli", "gnome-shell-extension-prefs"]
-APT_EXTENSIONES_SISTEMA = ["gnome-shell-ubuntu-extensions"]
+# Los nombres de paquete y los UUID de las extensiones del sistema cambian
+# entre distribuciones: viven en data/distros.json, no aqui.
+PERFIL_POR_DEFECTO = "debian"
 
 MARCADOR_HOME = "@LGW_HOME@"
 
@@ -107,6 +108,47 @@ class Ctx:
 # utilidades
 # ---------------------------------------------------------------------------
 
+def detectar_distro() -> tuple[str, dict]:
+    """Devuelve (nombre legible, perfil) segun /etc/os-release.
+
+    Kali declara ID=kali e ID_LIKE=debian, asi que se busca primero por ID
+    y luego por cada ID_LIKE. Sin esto el instalador pide paquetes de
+    Ubuntu en Kali y falla entero el paso de paquetes."""
+    campos: dict[str, str] = {}
+    try:
+        for linea in Path("/etc/os-release").read_text().splitlines():
+            if "=" in linea:
+                k, v = linea.split("=", 1)
+                campos[k.strip()] = v.strip().strip('"')
+    except OSError:
+        pass
+
+    try:
+        perfiles = json.loads((DATA / "distros.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        raise Fallo("no se pudo leer data/distros.json")
+
+    candidatos = [campos.get("ID", "")] + campos.get("ID_LIKE", "").split()
+    for c in candidatos:
+        if c and c in perfiles:
+            return campos.get("PRETTY_NAME", c), perfiles[c]
+    return (campos.get("PRETTY_NAME", "desconocida"),
+            perfiles.get(PERFIL_POR_DEFECTO, {}))
+
+
+def desktop_existe(nombre: str) -> bool:
+    """Si hay un .desktop con ese nombre en las rutas habituales."""
+    bases = [
+        Path("/usr/share/applications"),
+        Path("/usr/local/share/applications"),
+        Path.home() / ".local/share/applications",
+        Path("/var/lib/snapd/desktop/applications"),
+        Path("/var/lib/flatpak/exports/share/applications"),
+        Path.home() / ".local/share/flatpak/exports/share/applications",
+    ]
+    return any((b / nombre).exists() for b in bases)
+
+
 def version_shell() -> str:
     """Version mayor de GNOME Shell de ESTA maquina."""
     try:
@@ -169,6 +211,12 @@ def paso_comprobaciones(x: Ctx) -> None:
         c.aviso(f"la sesion actual es '{sesion or 'desconocida'}', no GNOME")
     else:
         c.ok(f"sesion GNOME detectada ({os.environ.get('XDG_SESSION_TYPE', '?')})")
+
+    nombre, perfil = detectar_distro()
+    if perfil:
+        c.ok(f"{nombre} → perfil '{perfil.get('nombre', '?')}'")
+    else:
+        c.aviso(f"{nombre}: no hay perfil para esta distro; se usara el de Debian")
 
     ver = version_shell()
     c.ok(f"GNOME Shell {ver}")
@@ -247,30 +295,54 @@ def paso_respaldo(x: Ctx) -> None:
     c.ok(f"{len(guardadas)} ramas respaldadas · deshacer con --revert")
 
 
-def paso_apt_base(x: Ctx) -> None:
-    c = x.c
-    c.accion("Refrescando", "indices de apt")
-    x.correr(["apt-get", "update", "-qq"], root=True, tolerante=True)
-    faltan = [p for p in APT_BASE
-              if subprocess.run(["dpkg", "-s", p], capture_output=True).returncode != 0]
-    if not faltan:
-        c.saltado("las dependencias base ya estan instaladas")
-    else:
-        c.accion("Instalando", ", ".join(faltan))
-        x.correr(["apt-get", "install", "-y", *faltan], root=True)
-        c.ok(f"{len(faltan)} paquete{'s' if len(faltan) != 1 else ''} base instalado"
-             f"{'s' if len(faltan) != 1 else ''}")
+def _instalar_paquetes(x: Ctx, paquetes: list[str], etiqueta: str) -> list[str]:
+    """Instala uno a uno y tolerando fallos.
 
-    for p in APT_EXTENSIONES_SISTEMA:
-        c.accion("Instalando", f"{p} (extensiones de la distro)")
+    En una sola llamada a apt, un paquete inexistente tumba la instalacion
+    de todos los demas. Como los nombres varian entre distros, aqui eso
+    significaria quedarse sin curl por pedir un paquete de Ubuntu."""
+    c = x.c
+    fallidos = []
+    for p in paquetes:
+        if subprocess.run(["dpkg", "-s", p], capture_output=True).returncode == 0:
+            c.saltado(f"{p} ya instalado")
+            continue
+        c.accion("Instalando", f"{p}  ({etiqueta})")
         try:
             x.correr(["apt-get", "install", "-y", p], root=True)
-            c.ok(f"{p} disponible")
-        except Fallo:
-            c.aviso(f"{p} no existe en esta distro; ding/tiling-assistant/"
-                    "appindicators podrian no aparecer")
-            x.notas.append(f"{p} no se pudo instalar: revisa si tu distro empaqueta "
-                           "esas extensiones con otro nombre")
+            c.ok(f"{p}")
+        except Fallo as e:
+            c.aviso(f"{p}: no se pudo instalar ({e})")
+            fallidos.append(p)
+    return fallidos
+
+
+def paso_apt_base(x: Ctx) -> None:
+    c = x.c
+    nombre, perfil = detectar_distro()
+    c.info(f"paquetes para {perfil.get('nombre', nombre)}")
+
+    c.accion("Refrescando", "indices de apt")
+    x.correr(["apt-get", "update", "-qq"], root=True, tolerante=True)
+
+    fallidos = _instalar_paquetes(x, perfil.get("paquetes_base", []), "base")
+    if fallidos:
+        x.notas.append(f"dependencias base que faltan: {', '.join(fallidos)}")
+
+    fallidos = _instalar_paquetes(
+        x, perfil.get("paquetes_extensiones", []), "extensiones de la distro")
+    if fallidos:
+        x.notas.append(
+            f"extensiones del sistema no instaladas: {', '.join(fallidos)}. "
+            "Comprueba como las empaqueta tu distro y ajusta data/distros.json")
+
+    # El tema Yaru no viene fuera de Ubuntu, pero esta en Debian, asi que en
+    # Kali tambien se puede tener el magenta del equipo de origen.
+    fallidos = _instalar_paquetes(x, perfil.get("paquetes_tema", []), "tema Yaru")
+    if fallidos:
+        x.notas.append(
+            f"el tema Yaru no se pudo instalar ({', '.join(fallidos)}); "
+            "el escritorio usara el tema por defecto de la distro")
 
 
 def paso_sublime(x: Ctx) -> None:
@@ -477,6 +549,34 @@ def _filtrar_habilitadas(contenido: str, instaladas: set[str]) -> tuple[str, lis
     return re.sub(r"enabled-extensions=\[(.*?)\]", _sub, contenido), ausentes
 
 
+def _mapear_uuids(contenido: str, mapa: dict[str, str]) -> list[tuple[str, str]]:
+    """Traduce los UUID de extensiones del sistema al nombre de esta distro."""
+    cambios = []
+    for viejo, nuevo in mapa.items():
+        if f"'{viejo}'" in contenido:
+            cambios.append((viejo, nuevo))
+    return cambios
+
+
+def _filtrar_favoritos(contenido: str) -> tuple[str, list[str]]:
+    """Quita del dash los .desktop que no existen en esta maquina.
+
+    Los favoritos del equipo de origen son de Ubuntu: Ptyxis como terminal
+    y Firefox como snap ('firefox_firefox.desktop'). En Kali ninguno de los
+    dos existe y el dash saldria con huecos muertos."""
+    ausentes: list[str] = []
+
+    def _sub(m: re.Match) -> str:
+        apps = re.findall(r"'([^']+)'", m.group(1))
+        vivas = [a for a in apps if desktop_existe(a)]
+        ausentes.extend(a for a in apps if not desktop_existe(a))
+        if not ausentes:
+            return m.group(0)
+        return "favorite-apps=[" + ", ".join(f"'{a}'" for a in vivas) + "]"
+
+    return re.sub(r"favorite-apps=\[(.*?)\]", _sub, contenido), ausentes
+
+
 def paso_dconf(x: Ctx) -> None:
     c = x.c
     ramas = ramas_objetivo()
@@ -485,9 +585,24 @@ def paso_dconf(x: Ctx) -> None:
 
     monitor = monitor_actual()
     instaladas = extensiones_instaladas()
+    _, perfil = detectar_distro()
+    mapa = perfil.get("uuid_sistema", {})
+
     for fichero, ruta in ramas:
         contenido = fichero.read_text().replace(MARCADOR_HOME, str(Path.home()))
         etiqueta = fichero.stem.split("-", 1)[1] if "-" in fichero.stem else fichero.stem
+
+        for viejo, nuevo in _mapear_uuids(contenido, mapa):
+            contenido = contenido.replace(f"'{viejo}'", f"'{nuevo}'")
+            c.info(f"{viejo} → {nuevo} (nombre en esta distro)")
+
+        if "favorite-apps=" in contenido:
+            contenido, sin_app = _filtrar_favoritos(contenido)
+            if sin_app:
+                c.aviso(f"fuera del dash (no instaladas): {', '.join(sin_app)}")
+                x.notas.append(
+                    f"{len(sin_app)} favoritos del dash no existen en esta distro "
+                    f"({', '.join(sin_app)}); anclalos tu con los equivalentes")
 
         if "enabled-extensions=" in contenido:
             contenido, ausentes = _filtrar_habilitadas(contenido, instaladas)

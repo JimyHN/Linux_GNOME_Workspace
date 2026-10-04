@@ -1,0 +1,30 @@
+{
+  "_comentario": [
+    "Perfiles por distribucion. La clave se busca primero por ID de",
+    "/etc/os-release y si no, por cada entrada de ID_LIKE. Kali trae",
+    "ID=kali e ID_LIKE=debian, asi que cae en el perfil 'debian'.",
+    "",
+    "uuid_sistema mapea los UUID de las extensiones que vienen con la",
+    "distro: Ubuntu y Debian empaquetan forks distintos de tiling-assistant",
+    "y el UUID no coincide, asi que sin el mapa la extension no se habilita."
+  ],
+  "ubuntu": {
+    "nombre": "Ubuntu",
+    "paquetes_base": ["curl", "unzip", "dconf-cli", "gnome-shell-extension-prefs"],
+    "paquetes_extensiones": ["gnome-shell-ubuntu-extensions"],
+    "paquetes_tema": ["yaru-theme-gtk", "yaru-theme-icon"],
+    "uuid_sistema": {}
+  },
+  "debian": {
+    "nombre": "Debian / Kali",
+    "paquetes_base": ["curl", "unzip", "dconf-cli", "gnome-shell-extension-prefs"],
+    "paquetes_extensiones": [
+      "gnome-shell-extension-desktop-icons-ng",
+      "gnome-shell-extension-tiling-assistant"
+    ],
+    "paquetes_tema": ["yaru-theme-gtk", "yaru-theme-icon"],
+    "uuid_sistema": {
+      "tiling-assistant@ubuntu.com": "tiling-assistant@leleat-on-github"
+    }
+  }
+}

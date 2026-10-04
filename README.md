@@ -4,6 +4,10 @@ Monta de una tacada el escritorio GNOME que uso, en una máquina nueva o una VM
 recién instalada: extensiones con su configuración individual, atajos de
 teclado, tema y Sublime Text.
 
+Funciona en **Ubuntu y en Kali** (y en cualquier Debian). Detecta la distro y
+adapta los nombres de paquete, los UUID de las extensiones del sistema y los
+favoritos del dash, que no son los mismos en una y otra.
+
 ```bash
 git clone https://github.com/JimyHN/Linux_GNOME_Workspace.git
 cd Linux_GNOME_Workspace
@@ -24,8 +28,9 @@ que corresponda a tu GNOME:
 Blur my Shell · Burn My Windows · Caffeine · Clipboard Indicator ·
 Dash to Panel · GSConnect · Show My IP · User Themes · Vitals
 
-**Extensiones de la distro** (`gnome-shell-ubuntu-extensions`): Desktop Icons
-NG, Tiling Assistant, AppIndicators.
+**Extensiones de la distro**: Desktop Icons NG y Tiling Assistant. En Ubuntu
+vienen en `gnome-shell-ubuntu-extensions`; en Kali son paquetes sueltos y
+Tiling Assistant tiene otro UUID, así que el instalador lo traduce solo.
 
 **Cada una con su configuración**: los sensores que enseña Vitals, el blur y
 los pipelines de Blur my Shell, los colores y el estilo del panel de

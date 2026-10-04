@@ -1,8 +1,13 @@
 # Linux_GNOME_Workspace
 
-Replica el escritorio GNOME del ordenador de referencia en una máquina nueva
-(normalmente una VM recién instalada): extensiones con su configuración
-individual, atajos de teclado, tema y Sublime Text.
+Replica el escritorio GNOME del ordenador de referencia en una máquina nueva:
+extensiones con su configuración individual, atajos de teclado, tema y
+Sublime Text.
+
+El origen es Ubuntu y **el destino habitual es una VM de Kali**. No es el
+mismo sistema: Kali es Debian, y los nombres de paquete, los UUID de las
+extensiones del sistema y las aplicaciones del dash cambian. Todo lo que
+dependa de la distro va en `data/distros.json`, nunca escrito en el código.
 
 `LGW_installer.py` lee `data/` y lo aplica. `data/` es la única fuente de
 verdad y **se mantiene a mano**: si cambias algo en el escritorio de
@@ -67,6 +72,30 @@ Dos capturas que parecen redundantes y no lo son: `12-mutter` toma la rama
 `tiling-assistant` lo da por hecho (lo apunta en su `overridden-settings`).
 Y `05-input-sources` lleva la distribución de teclado: sin ella la VM
 arranca en US y es de las cosas más molestas de arreglar a mano.
+
+## Diferencias entre Ubuntu y Kali
+
+`detectar_distro()` lee `/etc/os-release` y busca el perfil por `ID` y luego
+por cada `ID_LIKE`. Kali declara `ID=kali`, `ID_LIKE=debian`, así que cae en
+el perfil `debian`.
+
+| | Ubuntu | Debian / Kali |
+|---|---|---|
+| Extensiones de la distro | `gnome-shell-ubuntu-extensions` | `gnome-shell-extension-desktop-icons-ng`, `gnome-shell-extension-tiling-assistant` |
+| UUID de tiling-assistant | `tiling-assistant@ubuntu.com` | `tiling-assistant@leleat-on-github` |
+| Terminal del dash | `org.gnome.Ptyxis.desktop` | no existe |
+| Firefox | snap, `firefox_firefox.desktop` | `firefox-esr.desktop` |
+| Tema Yaru | preinstalado | en los repos (`yaru-theme-gtk`) |
+
+Son forks distintos de la misma extensión, por eso el UUID no coincide;
+`_mapear_uuids()` lo traduce antes de escribir `enabled-extensions`. Los
+favoritos que no existan se caen del dash con `_filtrar_favoritos()` en vez
+de dejar huecos muertos.
+
+**Los paquetes se instalan uno a uno.** En una sola llamada a `apt-get
+install`, un paquete inexistente tumba la instalación de todos los demás:
+pedir un paquete de Ubuntu en Kali te dejaba sin `curl` ni `dconf-cli`.
+`_instalar_paquetes()` va de uno en uno y tolera fallos.
 
 ## Lo que no se transfiere tal cual
 
