@@ -146,6 +146,25 @@ huecos y listados en el mismo orden en `custom-keybindings`: GNOME ignora
 toda entrada cuya ruta no aparezca ahí. Al quitar uno hay que renumerar los
 siguientes.
 
+## Instalar extensiones: por qué vía el Shell
+
+`paso_extensiones` le pide al Shell que las instale, con
+`org.gnome.Shell.Extensions.InstallRemoteExtension` por D-Bus. Es lo mismo
+que hace el interruptor de extensions.gnome.org en el navegador: GNOME
+descarga, instala **y carga** la extensión de una vez.
+
+No es un capricho. Dejar los ficheros en `~/.local/share/gnome-shell/extensions`
+funciona, pero el Shell no se entera:
+
+- solo escanea extensiones al arrancar;
+- `ReloadExtension` responde `ReloadExtension is deprecated and does not work`;
+- en Wayland no se puede reiniciar el Shell sin cerrar sesión.
+
+El precio es un diálogo de confirmación por extensión, el mismo que sale al
+instalarla desde el navegador. `--zip` usa la descarga directa, sin diálogos,
+pero entonces hay que cerrar sesión. Si no hay Shell en el bus de sesión, se
+cae a `--zip` solo.
+
 ## `gnome-extensions list` miente
 
 `extensiones_instaladas()` lee el **disco**, no el Shell. No lo cambies por

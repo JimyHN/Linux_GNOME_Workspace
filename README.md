@@ -14,16 +14,21 @@ cd Linux_GNOME_Workspace
 python3 LGW_installer.py
 ```
 
-Te pregunta una vez y lo hace todo. Con `-y` ni pregunta. Al terminar hay que
-cerrar sesión y volver a entrar para que GNOME cargue las extensiones.
+Te pregunta una vez y lo hace todo. Con `-y` ni pregunta.
+
+Las extensiones se instalan pidiéndoselo a GNOME, así que verás un diálogo de
+confirmación por cada una y quedarán activas al momento. Si prefieres que no
+pregunte nada, `--zip` las baja directamente, pero entonces hay que cerrar
+sesión para que GNOME las cargue.
 
 > No lo ejecutes con `sudo`: la configuración es del usuario. El script pide
 > `sudo` por su cuenta solo para instalar paquetes.
 
 ## Qué deja instalado
 
-**Extensiones de usuario**, descargadas de extensions.gnome.org en la versión
-que corresponda a tu GNOME:
+**Extensiones de usuario**, instaladas a través de GNOME Shell igual que si
+pulsaras el interruptor en extensions.gnome.org — sale un diálogo de
+confirmación por cada una y quedan activas al momento, sin cerrar sesión:
 
 Blur my Shell · Burn My Windows · Caffeine · Clipboard Indicator ·
 Dash to Panel · GSConnect · Show My IP · User Themes · Vitals
@@ -65,6 +70,7 @@ python3 LGW_installer.py -r                       # deshacer la instalación
 python3 LGW_installer.py -n                       # simular, no toca nada
 python3 LGW_installer.py --only extensiones,ajustes
 python3 LGW_installer.py --skip sublime
+python3 LGW_installer.py --zip                    # extensiones sin diálogos (requiere cerrar sesión)
 python3 LGW_installer.py -d                       # diagnosticar extensiones
 python3 LGW_installer.py -l                       # listar los pasos
 ```

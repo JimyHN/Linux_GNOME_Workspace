@@ -70,9 +70,10 @@ def abrir(url: str, timeout: int = 30):
 # ---------------------------------------------------------------------------
 
 class Ctx:
-    def __init__(self, consola: Consola, dry_run: bool):
+    def __init__(self, consola: Consola, dry_run: bool, forzar_zip: bool = False):
         self.c = consola
         self.dry_run = dry_run
+        self.forzar_zip = forzar_zip
         self.hechos = 0
         self.fallos = 0
         self.notas: list[str] = []
@@ -397,6 +398,52 @@ def paso_sublime(x: Ctx) -> None:
     c.ok("Sublime Text instalado (ejecutable: subl)")
 
 
+def shell_accesible() -> bool:
+    """Si hay un GNOME Shell vivo en el bus de sesion al que pedirle cosas."""
+    if not shutil.which("gdbus"):
+        return False
+    r = subprocess.run(
+        ["gdbus", "call", "--session", "--dest", "org.gnome.Shell",
+         "--object-path", "/org/gnome/Shell", "--method",
+         "org.freedesktop.DBus.Properties.Get",
+         "org.gnome.Shell.Extensions", "ShellVersion"],
+        capture_output=True, text=True)
+    return r.returncode == 0
+
+
+def _instalar_via_shell(x: Ctx, uuid: str) -> bool:
+    """Le pide al Shell que instale la extension, como hace el navegador.
+
+    Es la unica forma de que GNOME la cargue sin cerrar sesion. Poner los
+    ficheros en ~/.local/share no basta: el Shell solo escanea al arrancar,
+    ReloadExtension esta deprecado y devuelve
+    'ReloadExtension is deprecated and does not work', y en Wayland no se
+    puede reiniciar el Shell. InstallRemoteExtension descarga, instala y
+    carga de una vez, que es lo que pasa al pulsar el interruptor en
+    extensions.gnome.org.
+
+    A cambio muestra un dialogo de confirmacion por extension, el mismo que
+    sale al instalarla desde el navegador."""
+    if x.dry_run:
+        x.c.detalle(f"(dry-run) InstallRemoteExtension {uuid}")
+        return True
+    try:
+        r = subprocess.run(
+            ["gdbus", "call", "--session", "--dest", "org.gnome.Shell",
+             "--object-path", "/org/gnome/Shell", "--method",
+             "org.gnome.Shell.Extensions.InstallRemoteExtension", uuid],
+            capture_output=True, text=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        raise Fallo("el dialogo de confirmacion no se respondio en 5 minutos")
+    salida = (r.stdout + r.stderr).strip()
+    x.c.detalle(salida)
+    if r.returncode != 0:
+        raise Fallo(salida.splitlines()[-1] if salida else f"codigo {r.returncode}")
+    if "cancelled" in salida:
+        raise Fallo("cancelada en el dialogo de confirmacion")
+    return "successful" in salida
+
+
 def _instalar_zip(x: Ctx, uuid: str, datos: bytes) -> None:
     """Instala el zip con gnome-extensions y, si falla, a mano.
 
@@ -446,10 +493,34 @@ def paso_extensiones(x: Ctx) -> None:
     instaladas = extensiones_instaladas()
     puestas, sin_build, con_error = [], [], []
 
+    # Por defecto se pide al Shell que las instale: es lo unico que las deja
+    # cargadas sin cerrar sesion. Con --zip se bajan a mano, sin dialogos,
+    # pero entonces hace falta reiniciar la sesion.
+    via_shell = not x.forzar_zip and shell_accesible()
+    if via_shell:
+        c.info("se instalaran a traves de GNOME Shell: saldra un dialogo de "
+               "confirmacion por extension y quedaran activas al momento")
+    else:
+        motivo = "--zip" if x.forzar_zip else "no hay GNOME Shell en el bus de sesion"
+        c.info(f"descarga directa ({motivo}): sin dialogos, pero habra que "
+               "cerrar sesion para que GNOME las cargue")
+
     for e in lista:
         uuid, nombre = e["uuid"], e["nombre"]
         if uuid in instaladas:
             c.saltado(f"{nombre} ya instalada")
+            continue
+
+        if via_shell:
+            c.accion("Instalando", f"{nombre} (confirma en el dialogo)")
+            try:
+                _instalar_via_shell(x, uuid)
+            except Fallo as err:
+                c.error(f"{nombre}: {err}")
+                con_error.append(nombre)
+                continue
+            puestas.append(uuid)
+            c.ok(f"{nombre} instalada y cargada")
             continue
 
         c.accion("Consultando", f"{nombre}")
@@ -516,7 +587,10 @@ def paso_extensiones(x: Ctx) -> None:
                        "Repite con -v para ver el detalle")
     if not puestas and not sin_build and not con_error:
         c.info("no habia nada que instalar: ya estaban todas")
-    c.info("GNOME las carga al reiniciar la sesion, no antes")
+    if via_shell:
+        c.info("ya estan cargadas: no hace falta cerrar sesion")
+    else:
+        c.info("GNOME las carga al reiniciar la sesion, no antes")
 
 
 def _remapear_monitor(contenido: str, monitor: str | None) -> tuple[str, str | None]:
@@ -682,9 +756,11 @@ def paso_dconf(x: Ctx) -> None:
                     "no te quedas sin barra")
             if apagadas:
                 c.info(f"se apagan por tener reemplazo instalado: {', '.join(apagadas)}")
-            heredadas = sorted(previas & instaladas - set(
-                re.findall(r"'([^']+)'", re.search(r"enabled-extensions=\[(.*?)\]",
-                                                   fichero.read_text()).group(1))))
+            finales = set(re.findall(r"'([^']+)'", re.search(
+                r"enabled-extensions=\[(.*?)\]", contenido).group(1)))
+            heredadas = sorted((previas & instaladas & finales) - set(re.findall(
+                r"'([^']+)'", re.search(r"enabled-extensions=\[(.*?)\]",
+                                        fichero.read_text()).group(1))))
             if heredadas:
                 c.info(f"se conservan activas las que ya tenias: {', '.join(heredadas)}")
 
@@ -981,6 +1057,9 @@ def main() -> int:
                    help="simular sin modificar el sistema")
     p.add_argument("--only", metavar="PASOS", help="ejecutar solo estos pasos (comas)")
     p.add_argument("--skip", metavar="PASOS", help="ejecutar todo menos estos pasos (comas)")
+    p.add_argument("--zip", action="store_true",
+                   help="descargar las extensiones a mano en vez de pedirselo a "
+                        "GNOME: sin dialogos, pero hay que cerrar sesion despues")
     p.add_argument("-d", "--diagnose", action="store_true",
                    help="comprobar paso a paso por que fallan las extensiones")
     p.add_argument("-l", "--list-steps", action="store_true", help="listar los pasos y salir")
@@ -1024,7 +1103,7 @@ def main() -> int:
             c.saltado("cancelado por el usuario")
             return 130
 
-    x = Ctx(c, args.dry_run)
+    x = Ctx(c, args.dry_run, args.zip)
     c.plan(len(pasos))
     for nombre, desc, fn in pasos:
         c.paso(desc)
