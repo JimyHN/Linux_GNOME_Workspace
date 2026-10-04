@@ -47,10 +47,11 @@ Dash to Panel, el efecto Glide de Burn My Windows…
 | `Shift`+`Super`+`B` | BurpSuite |
 | `Ctrl`+`Super`+`.` | Ambas pantallas |
 
-**Tema y escritorio**: Yaru-magenta-dark con acento rosa y modo oscuro, el
-fondo de pantalla, teclado español, numlock encendido, sin bloqueo de sesión
-ni apagado de pantalla, y `edge-tiling` desactivado para que mande
-Tiling Assistant.
+**Tema y escritorio**: Yaru-magenta-dark con acento rosa y modo oscuro,
+teclado español, numlock encendido, sin bloqueo de sesión ni apagado de
+pantalla, y `edge-tiling` desactivado para que mande Tiling Assistant.
+
+**El fondo de pantalla no se toca.** Cada máquina se queda con el suyo.
 
 **Sublime Text**, desde el repositorio oficial de sublimehq con la clave GPG
 en `/etc/apt/keyrings` (nada de `apt-key`).
@@ -63,7 +64,8 @@ python3 LGW_installer.py -y                       # sin preguntar
 python3 LGW_installer.py -r                       # deshacer la instalación
 python3 LGW_installer.py -n                       # simular, no toca nada
 python3 LGW_installer.py --only extensiones,ajustes
-python3 LGW_installer.py --skip sublime,fondos
+python3 LGW_installer.py --skip sublime
+python3 LGW_installer.py -d                       # diagnosticar extensiones
 python3 LGW_installer.py -l                       # listar los pasos
 ```
 
@@ -76,8 +78,7 @@ python3 LGW_installer.py --revert     # o -r
 ```
 
 Pide confirmación y devuelve el escritorio al estado anterior: restaura las
-ramas de dconf, desinstala las extensiones que puso y borra los fondos que
-copió. **No** desinstala paquetes de apt, así que Sublime Text se queda.
+ramas de dconf y desinstala las extensiones que puso. **No** desinstala paquetes de apt, así que Sublime Text se queda.
 
 Si nunca has ejecutado el instalador en esa máquina, te lo dice y no hace
 nada.

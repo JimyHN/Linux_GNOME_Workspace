@@ -4,6 +4,10 @@ Replica el escritorio GNOME del ordenador de referencia en una máquina nueva:
 extensiones con su configuración individual, atajos de teclado, tema y
 Sublime Text.
 
+**El fondo de pantalla no se toca y no se va a tocar.** Es cosa de cada
+máquina. No añadas `/org/gnome/desktop/background/` a `data/dconf/`, ni
+imágenes a `data/`, ni un paso que las copie. Se intentó y se quitó.
+
 El origen es Ubuntu y **el destino habitual es una VM de Kali**. No es el
 mismo sistema: Kali es Debian, y los nombres de paquete, los UUID de las
 extensiones del sistema y las aplicaciones del dash cambian. Todo lo que
@@ -124,22 +128,31 @@ fondo y la pantalla de bloqueo. El exportador las deja como `@LGW_HOME@`
 (`anonimizar()`) y `paso_dconf()` las resuelve al cargar, así el repo público
 no lleva el usuario y la ruta vale en cualquier máquina.
 
-**Orden de los fondos.** `paso_fondos` va **antes** que `paso_dconf` a
-propósito: si se escribe `picture-uri` apuntando a un fichero que todavía no
-existe, el escritorio se queda en negro hasta el siguiente arranque.
+**`enabled-extensions` se suma, no se sustituye.** Es el fallo que más veces
+se ha repetido. La lista del repo no incluye ningún dock, porque en el equipo
+de origen está apagado a favor de `dash-to-panel`. Escribirla tal cual apagaba
+el dock de la distro —`ubuntu-dock` en Ubuntu, `dash-to-dock` en Kali— y si
+además `dash-to-panel` no llegaba a instalarse, la sesión se quedaba **sin
+ninguna barra**. Pasó en Kali.
 
-**Extensiones que no se llegaron a instalar.** `01-shell.ini` fija
-`enabled-extensions`, y esa lista **no** incluye `ubuntu-dock` porque en el
-equipo de origen está apagado a favor de `dash-to-panel`. Si dash-to-panel
-no se instala y se aplica la lista tal cual, GNOME desactiva el dock y no
-pone nada en su lugar: sesión sin barra y sin dock, peor que no haber tocado
-nada. `_filtrar_habilitadas()` quita de la lista lo que no esté realmente
-instalado, así el dock que hubiera sobrevive. Fue un fallo real en una VM.
+`_fusionar_habilitadas()` construye la lista sumando las del repo que estén
+instaladas más las que ya estuvieran activas, y solo apaga algo cuando su
+reemplazo está instalado de verdad. El mapa de reemplazos está en
+`data/distros.json` → `reemplaza`. Si añades una extensión que sustituye a
+otra, declárala ahí; no la quites de la lista a mano.
 
 **Atajos.** Los `customN` de `11-media-keys.ini` tienen que ir numerados sin
 huecos y listados en el mismo orden en `custom-keybindings`: GNOME ignora
 toda entrada cuya ruta no aparezca ahí. Al quitar uno hay que renumerar los
 siguientes.
+
+## Diagnóstico
+
+`python3 LGW_installer.py -d` prueba la cadena completa con una sola
+extensión —API, descarga, validez del zip, instalación— e informa de dónde
+se rompe. Es lo primero que hay que pedir cuando alguien dice que las
+extensiones no se instalan, en vez de teorizar: ya se descartaron por ese
+camino el User-Agent, la falta de build por versión de GNOME y el 404.
 
 ## Reglas de trabajo
 

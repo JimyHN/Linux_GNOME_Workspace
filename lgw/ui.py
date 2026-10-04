@@ -105,7 +105,7 @@ class Consola:
 
     def entrada(self, clave: str, valor: str) -> None:
         """Fila de un listado: la clave en acento, la descripcion al lado."""
-        print("  " + self._t(f"{clave:<16}", "acento") + self._t(valor, "texto"))
+        print("  " + self._t(f"{clave:<22}", "acento") + self._t(valor, "texto"))
 
     def saltado(self, texto: str) -> None:
         self.saltados += 1
