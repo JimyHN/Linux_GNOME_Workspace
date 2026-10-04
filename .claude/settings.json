@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(dconf dump:*)",
+      "Bash(dconf list:*)",
+      "Bash(dconf read:*)",
+      "Bash(gsettings get:*)",
+      "Bash(gsettings list-keys:*)",
+      "Bash(gsettings list-recursively:*)",
+      "Bash(gnome-extensions list:*)",
+      "Bash(gnome-extensions info:*)",
+      "Bash(gnome-shell --version)",
+      "Bash(flatpak list:*)",
+      "Bash(apt list --installed:*)",
+      "Bash(lsb_release:*)",
+      "Bash(shellcheck:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)"
+    ],
+    "ask": [
+      "Bash(dconf write:*)",
+      "Bash(gsettings set:*)",
+      "Bash(gnome-extensions enable:*)",
+      "Bash(gnome-extensions disable:*)",
+      "Bash(gnome-extensions uninstall:*)",
+      "Bash(git push:*)"
+    ],
+    "deny": [
+      "Bash(dconf load:*)",
+      "Bash(dconf reset:*)",
+      "Read(./**/*id_rsa*)",
+      "Read(./**/*id_ed25519*)",
+      "Read(~/.ssh/**)",
+      "Read(~/.gnupg/**)"
+    ]
+  }
+}

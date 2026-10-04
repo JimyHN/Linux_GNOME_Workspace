@@ -1,0 +1,17 @@
+# Claude Code — ajustes locales por máquina
+.claude/settings.local.json
+
+# Secretos: nunca deben entrar en un repo público
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+.env
+.env.*
+secrets/
+
+# Respaldos y temporales
+*.bak
+*.tmp
+*.swp
+*~
