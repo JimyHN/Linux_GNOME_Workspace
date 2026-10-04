@@ -14,12 +14,22 @@ cd Linux_GNOME_Workspace
 python3 LGW_installer.py
 ```
 
-Te pregunta una vez y lo hace todo. Con `-y` ni pregunta.
+Te pregunta qué sistema es (Kali o Ubuntu), confirma una vez y lo hace todo.
 
-Las extensiones se instalan pidiéndoselo a GNOME, así que verás un diálogo de
-confirmación por cada una y quedarán activas al momento. Si prefieres que no
-pregunte nada, `--zip` las baja directamente, pero entonces hay que cerrar
-sesión para que GNOME las cargue.
+```
+  0. Salir
+  1. Kali
+  2. Ubuntu
+```
+
+Con `-so Kali` no lo pregunta. Con `-y` no pregunta nada y detecta el sistema
+solo.
+
+**Al terminar hay que cerrar sesión y volver a entrar** para que GNOME cargue
+las extensiones. Es la única cosa que tienes que hacer tú: el Shell solo las
+escanea al arrancar. Si prefieres no cerrar sesión, `--dialogos` se lo pide a
+GNOME y quedan activas al momento, pero tendrás que confirmar un diálogo por
+extensión.
 
 > No lo ejecutes con `sudo`: la configuración es del usuario. El script pide
 > `sudo` por su cuenta solo para instalar paquetes.
@@ -52,8 +62,9 @@ Dash to Panel, el efecto Glide de Burn My Windows…
 | `Shift`+`Super`+`B` | BurpSuite |
 | `Ctrl`+`Super`+`.` | Ambas pantallas |
 
-El dash solo ancla Nautilus: Ptyxis, el snap de Firefox y Deskflow son de
-Ubuntu y no existen en Kali, así que no se intentan anclar.
+**Iconos de la barra**, en este orden: terminal, archivos, Sublime Text,
+Firefox y Burp Suite. Cada uno se resuelve al nombre que tenga en tu sistema,
+porque el terminal y Firefox no se llaman igual en Ubuntu y en Kali.
 
 **Tema y escritorio**: Yaru-magenta-dark con acento rosa y modo oscuro,
 teclado español, numlock encendido, sin bloqueo de sesión ni apagado de
@@ -73,7 +84,8 @@ python3 LGW_installer.py -r                       # deshacer la instalación
 python3 LGW_installer.py -n                       # simular, no toca nada
 python3 LGW_installer.py --only extensiones,ajustes
 python3 LGW_installer.py --skip sublime
-python3 LGW_installer.py --zip                    # extensiones sin diálogos (requiere cerrar sesión)
+python3 LGW_installer.py -so Kali                 # sin preguntar el sistema
+python3 LGW_installer.py --dialogos               # extensiones activas sin cerrar sesión
 python3 LGW_installer.py -d                       # diagnosticar extensiones
 python3 LGW_installer.py -l                       # listar los pasos
 ```

@@ -70,10 +70,12 @@ def abrir(url: str, timeout: int = 30):
 # ---------------------------------------------------------------------------
 
 class Ctx:
-    def __init__(self, consola: Consola, dry_run: bool, forzar_zip: bool = False):
+    def __init__(self, consola: Consola, dry_run: bool, via_dialogos: bool = False):
         self.c = consola
         self.dry_run = dry_run
-        self.forzar_zip = forzar_zip
+        self.via_dialogos = via_dialogos
+        self.perfil: dict = {}
+        self.so: str = ""
         self.hechos = 0
         self.fallos = 0
         self.notas: list[str] = []
@@ -118,12 +120,19 @@ class Ctx:
 # utilidades
 # ---------------------------------------------------------------------------
 
-def detectar_distro(os_release: Path = Path("/etc/os-release")) -> tuple[str, dict]:
-    """Devuelve (nombre legible, perfil) segun /etc/os-release.
+def cargar_perfiles() -> dict:
+    try:
+        datos = json.loads((DATA / "distros.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        raise Fallo("no se pudo leer data/distros.json")
+    return {k: v for k, v in datos.items() if not k.startswith("_")}
 
-    Kali declara ID=kali e ID_LIKE=debian, asi que se busca primero por ID
-    y luego por cada ID_LIKE. Sin esto el instalador pide paquetes de
-    Ubuntu en Kali y falla entero el paso de paquetes."""
+
+def detectar_distro(os_release: Path = Path("/etc/os-release")) -> tuple[str, str | None]:
+    """Devuelve (nombre de /etc/os-release, clave de perfil o None).
+
+    Kali declara ID=kali e ID_LIKE=debian; se prueba el ID y luego cada
+    ID_LIKE contra la lista 'ids' de cada perfil."""
     campos: dict[str, str] = {}
     try:
         for linea in os_release.read_text().splitlines():
@@ -133,17 +142,52 @@ def detectar_distro(os_release: Path = Path("/etc/os-release")) -> tuple[str, di
     except OSError:
         pass
 
-    try:
-        perfiles = json.loads((DATA / "distros.json").read_text())
-    except (OSError, json.JSONDecodeError):
-        raise Fallo("no se pudo leer data/distros.json")
+    perfiles = cargar_perfiles()
+    bonito = campos.get("PRETTY_NAME", campos.get("ID", "desconocido"))
+    for candidato in [campos.get("ID", "")] + campos.get("ID_LIKE", "").split():
+        for clave, perfil in perfiles.items():
+            if candidato and candidato in perfil.get("ids", [clave]):
+                return bonito, clave
+    return bonito, None
 
-    candidatos = [campos.get("ID", "")] + campos.get("ID_LIKE", "").split()
-    for c in candidatos:
-        if c and c in perfiles:
-            return campos.get("PRETTY_NAME", c), perfiles[c]
-    return (campos.get("PRETTY_NAME", "desconocida"),
-            perfiles.get(PERFIL_POR_DEFECTO, {}))
+
+def elegir_so(c: Consola, pedido: str | None, asumir_si: bool) -> tuple[str, dict]:
+    """Decide el perfil: por --so, preguntando, o autodetectando con -y."""
+    perfiles = cargar_perfiles()
+    orden = ["kali", "ubuntu"]
+    orden += [k for k in perfiles if k not in orden]
+    bonito, detectado = detectar_distro()
+
+    if pedido:
+        clave = pedido.strip().lower()
+        if clave not in perfiles:
+            raise Fallo(f"sistema '{pedido}' no reconocido "
+                        f"(validos: {', '.join(perfiles[k]['nombre'] for k in orden)})")
+        c.ok(f"sistema indicado con --so: {perfiles[clave]['nombre']}")
+        return clave, perfiles[clave]
+
+    if asumir_si:
+        if not detectado:
+            raise Fallo(f"no se reconoce '{bonito}'; indicalo con --so Kali o --so Ubuntu")
+        c.ok(f"{bonito} → {perfiles[detectado]['nombre']} (autodetectado)")
+        return detectado, perfiles[detectado]
+
+    c.bruto()
+    c.info(f"/etc/os-release dice: {bonito}")
+    c.opcion("0", "Salir")
+    for i, clave in enumerate(orden, start=1):
+        c.opcion(str(i), perfiles[clave]["nombre"],
+                 "detectado" if clave == detectado else "")
+
+    por_defecto = str(orden.index(detectado) + 1) if detectado in orden else ""
+    while True:
+        elegido = c.pedir("¿Que sistema es este?", por_defecto)
+        if elegido == "0":
+            raise SystemExit(130)
+        if elegido.isdigit() and 1 <= int(elegido) <= len(orden):
+            clave = orden[int(elegido) - 1]
+            return clave, perfiles[clave]
+        c.error(f"elige un numero entre 0 y {len(orden)}")
 
 
 def desktop_existe(nombre: str) -> bool:
@@ -279,11 +323,7 @@ def paso_comprobaciones(x: Ctx) -> None:
     else:
         c.ok(f"sesion GNOME detectada ({os.environ.get('XDG_SESSION_TYPE', '?')})")
 
-    nombre, perfil = detectar_distro()
-    if perfil:
-        c.ok(f"{nombre} → perfil '{perfil.get('nombre', '?')}'")
-    else:
-        c.aviso(f"{nombre}: no hay perfil para esta distro; se usara el de Debian")
+    c.ok(f"sistema: {x.perfil.get('nombre', '?')}")
 
     ver = version_shell()
     c.ok(f"GNOME Shell {ver}")
@@ -396,8 +436,8 @@ def _instalar_paquetes(x: Ctx, paquetes: list[str], etiqueta: str) -> list[str]:
 
 def paso_apt_base(x: Ctx) -> None:
     c = x.c
-    nombre, perfil = detectar_distro()
-    c.info(f"paquetes para {perfil.get('nombre', nombre)}")
+    perfil = x.perfil
+    c.info(f"paquetes para {perfil.get('nombre', '?')}")
 
     c.accion("Refrescando", "indices de apt")
     x.correr(["apt-get", "update", "-qq"], root=True, tolerante=True)
@@ -550,17 +590,21 @@ def paso_extensiones(x: Ctx) -> None:
     instaladas = extensiones_instaladas()
     puestas, sin_build, con_error = [], [], []
 
-    # Por defecto se pide al Shell que las instale: es lo unico que las deja
-    # cargadas sin cerrar sesion. Con --zip se bajan a mano, sin dialogos,
-    # pero entonces hace falta reiniciar la sesion.
-    via_shell = not x.forzar_zip and shell_accesible()
+    # Por defecto, descarga directa: ni un clic. El precio es cerrar sesion
+    # una vez, porque el Shell solo escanea extensiones al arrancar. Con
+    # --dialogos se le pide al Shell que las instale (InstallRemoteExtension),
+    # que las deja cargadas al momento a cambio de un dialogo por extension.
+    # No hay tercera via: en Wayland, Mutter no implementa el protocolo
+    # virtual-keyboard, asi que el dialogo no se puede confirmar por software.
+    via_shell = x.via_dialogos and shell_accesible()
     if via_shell:
-        c.info("se instalaran a traves de GNOME Shell: saldra un dialogo de "
-               "confirmacion por extension y quedaran activas al momento")
+        c.info("se instalaran a traves de GNOME Shell: un dialogo de confirmacion "
+               "por extension, y quedan activas al momento")
     else:
-        motivo = "--zip" if x.forzar_zip else "no hay GNOME Shell en el bus de sesion"
-        c.info(f"descarga directa ({motivo}): sin dialogos, pero habra que "
-               "cerrar sesion para que GNOME las cargue")
+        if x.via_dialogos:
+            c.aviso("no hay GNOME Shell en el bus de sesion; se usa descarga directa")
+        c.info("descarga directa, sin dialogos: habra que cerrar sesion al final "
+               "para que GNOME las cargue")
 
     for e in lista:
         uuid, nombre = e["uuid"], e["nombre"]
@@ -716,23 +760,32 @@ def _mapear_uuids(contenido: str, mapa: dict[str, str]) -> list[tuple[str, str]]
     return cambios
 
 
-def _filtrar_favoritos(contenido: str) -> tuple[str, list[str]]:
-    """Quita del dash los .desktop que no existen en esta maquina.
+def _resolver_favoritos(contenido: str) -> tuple[str, list[tuple[str, str | None]]]:
+    """Construye favorite-apps en el orden de data/favoritos.json.
 
-    Los favoritos del equipo de origen son de Ubuntu: Ptyxis como terminal
-    y Firefox como snap ('firefox_firefox.desktop'). En Kali ninguno de los
-    dos existe y el dash saldria con huecos muertos."""
-    ausentes: list[str] = []
+    Cada entrada es un papel (Terminal, Archivos...) con varios candidatos,
+    y se ancla el primer .desktop que exista. El terminal y Firefox no se
+    llaman igual en Ubuntu y en Kali, asi que fijar nombres concretos dejaba
+    huecos muertos en el dash."""
+    try:
+        orden = json.loads((DATA / "favoritos.json").read_text())["orden"]
+    except (OSError, json.JSONDecodeError, KeyError):
+        return contenido, []
 
-    def _sub(m: re.Match) -> str:
-        apps = re.findall(r"'([^']+)'", m.group(1))
-        vivas = [a for a in apps if desktop_existe(a)]
-        ausentes.extend(a for a in apps if not desktop_existe(a))
-        if not ausentes:
-            return m.group(0)
-        return "favorite-apps=[" + ", ".join(f"'{a}'" for a in vivas) + "]"
+    elegidos, resueltos = [], []
+    for entrada in orden:
+        papel = entrada.get("papel", "?")
+        hallado = next((d for d in entrada.get("candidatos", []) if desktop_existe(d)), None)
+        resueltos.append((papel, hallado))
+        if hallado:
+            elegidos.append(hallado)
 
-    return re.sub(r"favorite-apps=\[(.*?)\]", _sub, contenido), ausentes
+    nueva = "favorite-apps=[" + ", ".join(f"'{a}'" for a in elegidos) + "]"
+    if "favorite-apps=" in contenido:
+        contenido = re.sub(r"favorite-apps=\[.*?\]", nueva, contenido)
+    else:
+        contenido = contenido.replace("[/]\n", f"[/]\n{nueva}\n", 1)
+    return contenido, resueltos
 
 
 def _tema_disponible(clase: str, nombre: str) -> bool:
@@ -782,7 +835,7 @@ def paso_dconf(x: Ctx) -> None:
     previas = set(subprocess.run(
         ["gsettings", "get", "org.gnome.shell", "enabled-extensions"],
         capture_output=True, text=True).stdout.strip().strip("[]").replace("'", "").split(", ")) - {""}
-    _, perfil = detectar_distro()
+    perfil = x.perfil
     mapa = perfil.get("uuid_sistema", {})
 
     for fichero, ruta in ramas:
@@ -799,13 +852,17 @@ def paso_dconf(x: Ctx) -> None:
                 c.aviso(a)
                 x.notas.append(a)
 
-        if "favorite-apps=" in contenido:
-            contenido, sin_app = _filtrar_favoritos(contenido)
-            if sin_app:
-                c.aviso(f"fuera del dash (no instaladas): {', '.join(sin_app)}")
+        if ruta == "/org/gnome/shell/":
+            contenido, resueltos = _resolver_favoritos(contenido)
+            faltan = [p for p, d in resueltos if not d]
+            for papel, desktop in resueltos:
+                if desktop:
+                    c.info(f"barra: {papel} → {desktop}")
+            if faltan:
+                c.aviso(f"sin icono en la barra (no instalado): {', '.join(faltan)}")
                 x.notas.append(
-                    f"{len(sin_app)} favoritos del dash no existen en esta distro "
-                    f"({', '.join(sin_app)}); anclalos tu con los equivalentes")
+                    f"no se anclaron {', '.join(faltan)} porque no estan instalados; "
+                    "instalalos y repite el paso 'ajustes'")
 
         if "enabled-extensions=" in contenido:
             contenido, ausentes, apagadas = _fusionar_habilitadas(
@@ -826,7 +883,7 @@ def paso_dconf(x: Ctx) -> None:
             if heredadas:
                 c.info(f"se conservan activas las que ya tenias: {', '.join(heredadas)}")
 
-        if fichero.stem.endswith("dash-to-panel"):
+        if ruta == "/org/gnome/shell/extensions/dash-to-panel/":
             contenido, nota = _remapear_monitor(contenido, monitor)
             if monitor and not nota:
                 c.info(f"panel de dash-to-panel ajustado al monitor '{monitor}'")
@@ -1090,7 +1147,10 @@ def construir_parser() -> argparse.ArgumentParser:
             "      Pregunta si quieres instalarlo todo y lo hace.\n"
             "\n"
             "  python3 LGW_installer.py -y\n"
-            "      Lo instala todo sin preguntar nada (util por SSH o en un script).\n"
+            "      Lo instala todo sin preguntar nada: detecta el sistema solo.\n"
+            "\n"
+            "  python3 LGW_installer.py -so Kali\n"
+            "      Da el sistema por hecho y no pregunta cual es.\n"
             "\n"
             "  python3 LGW_installer.py -r\n"
             "      Deshace la instalacion y vuelve al estado anterior.\n"
@@ -1121,9 +1181,12 @@ def main() -> int:
                    help="simular sin modificar el sistema")
     p.add_argument("--only", metavar="PASOS", help="ejecutar solo estos pasos (comas)")
     p.add_argument("--skip", metavar="PASOS", help="ejecutar todo menos estos pasos (comas)")
-    p.add_argument("--zip", action="store_true",
-                   help="descargar las extensiones a mano en vez de pedirselo a "
-                        "GNOME: sin dialogos, pero hay que cerrar sesion despues")
+    p.add_argument("-so", "--so", metavar="SISTEMA", dest="so",
+                   help="indicar el sistema (Kali o Ubuntu) y no preguntarlo")
+    p.add_argument("--dialogos", action="store_true",
+                   help="instalar las extensiones a traves de GNOME Shell: quedan "
+                        "activas sin cerrar sesion, a cambio de confirmar un "
+                        "dialogo por extension")
     p.add_argument("-d", "--diagnose", action="store_true",
                    help="comprobar paso a paso por que fallan las extensiones")
     p.add_argument("-l", "--list-steps", action="store_true", help="listar los pasos y salir")
@@ -1151,6 +1214,15 @@ def main() -> int:
     if args.dry_run:
         c.aviso("modo simulacion: no se va a modificar nada")
 
+    try:
+        so, perfil = elegir_so(c, args.so, args.yes or args.dry_run)
+    except Fallo as e:
+        c.error(str(e))
+        return 2
+    except SystemExit:
+        c.saltado("cancelado")
+        return 130
+
     validos = {n for n, _, _ in PASOS}
     pedidos = {s.strip() for s in args.only.split(",") if s.strip()} if args.only else None
     omitidos = {s.strip() for s in (args.skip or "").split(",") if s.strip()}
@@ -1167,7 +1239,8 @@ def main() -> int:
             c.saltado("cancelado por el usuario")
             return 130
 
-    x = Ctx(c, args.dry_run, args.zip)
+    x = Ctx(c, args.dry_run, args.dialogos)
+    x.so, x.perfil = so, perfil
     c.plan(len(pasos))
     for nombre, desc, fn in pasos:
         c.paso(desc)

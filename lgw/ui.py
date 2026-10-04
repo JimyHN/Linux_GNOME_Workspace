@@ -127,6 +127,26 @@ class Consola:
             return por_defecto
         return r in ("s", "si", "sí", "y", "yes")
 
+    def opcion(self, numero: str, texto: str, nota: str = "") -> None:
+        """Fila de un menu numerado: '  1. Kali'."""
+        linea = ("  " + self._t(f"{numero}.", "acento", negrita=True)
+                 + " " + self._t(texto, "texto"))
+        if nota:
+            linea += self._t(f"  ({nota})", "tenue")
+        print(linea)
+
+    def pedir(self, texto: str, por_defecto: str = "") -> str:
+        """Lee una respuesta libre. Enter devuelve el valor por defecto."""
+        pista = f" [{por_defecto}]" if por_defecto else ""
+        linea = ("\n" + self._t("? ", "acento", negrita=True)
+                 + self._t(texto, "texto") + self._t(pista, "tenue") + " ")
+        try:
+            r = input(linea).strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return "0"
+        return r or por_defecto
+
     def resumen(self, hechos: int, saltados: int, fallos: int) -> None:
         print()
         partes = [

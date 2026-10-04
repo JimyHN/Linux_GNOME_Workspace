@@ -1,43 +1,21 @@
 {
   "_comentario": [
-    "Perfiles por distribucion. La clave se busca primero por ID de",
-    "/etc/os-release y si no, por cada entrada de ID_LIKE. Kali trae",
-    "ID=kali e ID_LIKE=debian, asi que cae en el perfil 'debian'.",
+    "Perfiles por sistema operativo. 'ids' son los valores de ID e ID_LIKE",
+    "de /etc/os-release con los que se autodetecta: Kali declara ID=kali e",
+    "ID_LIKE=debian, y un Debian a secas cae en el mismo perfil porque los",
+    "paquetes y los UUID son los suyos.",
     "",
     "uuid_sistema mapea los UUID de las extensiones que vienen con la",
     "distro: Ubuntu y Debian empaquetan forks distintos de tiling-assistant",
-    "y el UUID no coincide, asi que sin el mapa la extension no se habilita.",
+    "y el UUID no coincide, asi que sin el mapa no se habilita.",
     "",
     "reemplaza: que extensiones apagar, y SOLO si la de la izquierda se ha",
     "instalado de verdad. dash-to-panel sustituye al dock, pero si no llega",
     "a instalarse no se toca el dock que traiga la distro: quedarse sin",
     "ninguna barra es peor que tener la de serie."
   ],
-  "ubuntu": {
-    "nombre": "Ubuntu",
-    "paquetes_base": [
-      "curl",
-      "unzip",
-      "dconf-cli",
-      "gnome-shell-extension-prefs"
-    ],
-    "paquetes_extensiones": [
-      "gnome-shell-ubuntu-extensions"
-    ],
-    "paquetes_tema": [
-      "yaru-theme-gtk",
-      "yaru-theme-icon"
-    ],
-    "uuid_sistema": {},
-    "reemplaza": {
-      "dash-to-panel@jderose9.github.com": [
-        "ubuntu-dock@ubuntu.com",
-        "dash-to-dock@micxgx.gmail.com"
-      ]
-    }
-  },
-  "debian": {
-    "nombre": "Debian / Kali",
+  "kali": {
+    "nombre": "Kali",
     "paquetes_base": [
       "curl",
       "unzip",
@@ -60,6 +38,36 @@
         "ubuntu-dock@ubuntu.com",
         "dash-to-dock@micxgx.gmail.com"
       ]
-    }
+    },
+    "ids": [
+      "kali",
+      "debian"
+    ]
+  },
+  "ubuntu": {
+    "nombre": "Ubuntu",
+    "paquetes_base": [
+      "curl",
+      "unzip",
+      "dconf-cli",
+      "gnome-shell-extension-prefs"
+    ],
+    "paquetes_extensiones": [
+      "gnome-shell-ubuntu-extensions"
+    ],
+    "paquetes_tema": [
+      "yaru-theme-gtk",
+      "yaru-theme-icon"
+    ],
+    "uuid_sistema": {},
+    "reemplaza": {
+      "dash-to-panel@jderose9.github.com": [
+        "ubuntu-dock@ubuntu.com",
+        "dash-to-dock@micxgx.gmail.com"
+      ]
+    },
+    "ids": [
+      "ubuntu"
+    ]
   }
 }

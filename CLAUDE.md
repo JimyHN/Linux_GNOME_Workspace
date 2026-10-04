@@ -71,6 +71,10 @@ hot-sensors=['_system_load_1m_', '_memory_usage_']
 El prefijo numérico fija el orden de aplicación: `00-`–`07-` escritorio,
 `10-`–`13-` atajos, `30-ext-` extensiones.
 
+Para decidir si un `.ini` necesita trato especial, compara **la ruta dconf**,
+no el nombre del fichero: el stem de `30-ext-blur-my-shell` también acaba en
+`shell` y se colaba en la lógica de `/org/gnome/shell/`.
+
 Dos capturas que parecen redundantes y no lo son: `12-mutter` toma la rama
 **entera**, no solo `keybindings/`, porque `edge-tiling` vive en la raíz y
 `tiling-assistant` lo da por hecho (lo apunta en su `overridden-settings`).
@@ -79,9 +83,18 @@ arranca en US y es de las cosas más molestas de arreglar a mano.
 
 ## Diferencias entre Ubuntu y Kali
 
-`detectar_distro()` lee `/etc/os-release` y busca el perfil por `ID` y luego
-por cada `ID_LIKE`. Kali declara `ID=kali`, `ID_LIKE=debian`, así que cae en
-el perfil `debian`.
+El sistema se elige con `elegir_so()`, en este orden: `--so Kali` / `--so
+Ubuntu` si viene en la línea de órdenes; con `-y` se autodetecta de
+`/etc/os-release`; y si no, se pregunta con un menú `0. Salir / 1. Kali /
+2. Ubuntu` marcando el detectado como opción por defecto.
+
+La autodetección compara `ID` y cada `ID_LIKE` contra la lista `ids` de cada
+perfil en `data/distros.json`. Kali declara `ID=kali`, `ID_LIKE=debian`, y un
+Debian a secas cae en el perfil de Kali porque los paquetes son los mismos.
+
+El perfil elegido se guarda en `Ctx.perfil` y los pasos lo leen de ahí. **No
+vuelvas a llamar a `detectar_distro()` dentro de un paso**: pisaría la
+elección del usuario.
 
 | | Ubuntu | Debian / Kali |
 |---|---|---|
@@ -159,24 +172,27 @@ huecos y listados en el mismo orden en `custom-keybindings`: GNOME ignora
 toda entrada cuya ruta no aparezca ahí. Al quitar uno hay que renumerar los
 siguientes.
 
-## Instalar extensiones: por qué vía el Shell
+## Instalar extensiones: las dos vías
 
-`paso_extensiones` le pide al Shell que las instale, con
-`org.gnome.Shell.Extensions.InstallRemoteExtension` por D-Bus. Es lo mismo
-que hace el interruptor de extensions.gnome.org en el navegador: GNOME
-descarga, instala **y carga** la extensión de una vez.
+**Por defecto**: descarga directa del zip. Cero clics, pero hay que cerrar
+sesión al final porque el Shell solo escanea extensiones al arrancar.
 
-No es un capricho. Dejar los ficheros en `~/.local/share/gnome-shell/extensions`
-funciona, pero el Shell no se entera:
+**`--dialogos`**: se lo pide al Shell con
+`org.gnome.Shell.Extensions.InstallRemoteExtension`, igual que el interruptor
+de extensions.gnome.org. Quedan cargadas al momento, a cambio de confirmar un
+diálogo por extensión.
 
-- solo escanea extensiones al arrancar;
+No hay una tercera vía, y está comprobado:
+
+- poner los ficheros en `~/.local/share/gnome-shell/extensions` no basta: el
+  Shell no los ve hasta reiniciar;
 - `ReloadExtension` responde `ReloadExtension is deprecated and does not work`;
-- en Wayland no se puede reiniciar el Shell sin cerrar sesión.
-
-El precio es un diálogo de confirmación por extensión, el mismo que sale al
-instalarla desde el navegador. `--zip` usa la descarga directa, sin diálogos,
-pero entonces hay que cerrar sesión. Si no hay Shell en el bus de sesión, se
-cae a `--zip` solo.
+- añadir el UUID a `enabled-extensions` tampoco carga lo que no se escaneó;
+- en Wayland no se puede reiniciar el Shell sin cerrar sesión;
+- **el diálogo no se puede confirmar por software**: Mutter no implementa el
+  protocolo `virtual-keyboard` de Wayland, así que `xdotool` (solo X11),
+  `wtype` y `ydotool` no sirven. Es una barrera de seguridad, no una
+  dependencia que falte. No lo intentes otra vez.
 
 ## `gnome-extensions list` miente
 
@@ -197,6 +213,15 @@ quedaba sin barra.
 
 Por lo mismo, `_instalar_zip()` no se fía del código de salida: comprueba que
 exista `metadata.json` en el destino y, si no está, descomprime a mano.
+
+## Iconos de la barra
+
+`favorite-apps` se construye en la máquina destino con
+`_resolver_favoritos()`, a partir de `data/favoritos.json`: cada entrada es
+un papel (Terminal, Archivos, Sublime Text, Firefox, Burp Suite) con varios
+candidatos, y se ancla el primer `.desktop` que exista. El terminal y Firefox
+no se llaman igual en Ubuntu y en Kali, así que fijar nombres concretos
+dejaba huecos muertos. El orden del JSON es el orden de la barra.
 
 ## Diagnóstico
 

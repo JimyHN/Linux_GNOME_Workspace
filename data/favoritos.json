@@ -1,0 +1,54 @@
+{
+  "_comentario": [
+    "Iconos de la barra, en orden. Cada entrada es un papel con varios",
+    "candidatos: se ancla el PRIMERO cuyo .desktop exista en la maquina.",
+    "Asi la misma lista vale en Ubuntu y en Kali, donde el terminal y",
+    "Firefox se llaman distinto, en vez de dejar huecos muertos."
+  ],
+  "orden": [
+    {
+      "papel": "Terminal",
+      "candidatos": [
+        "org.gnome.Ptyxis.desktop",
+        "org.gnome.Terminal.desktop",
+        "org.gnome.Console.desktop",
+        "kgx.desktop",
+        "qterminal.desktop",
+        "xfce4-terminal.desktop"
+      ]
+    },
+    {
+      "papel": "Archivos",
+      "candidatos": [
+        "org.gnome.Nautilus.desktop",
+        "thunar.desktop",
+        "nemo.desktop"
+      ]
+    },
+    {
+      "papel": "Sublime Text",
+      "candidatos": [
+        "sublime_text.desktop",
+        "sublime-text.desktop"
+      ]
+    },
+    {
+      "papel": "Firefox",
+      "candidatos": [
+        "firefox-esr.desktop",
+        "firefox.desktop",
+        "firefox_firefox.desktop",
+        "org.mozilla.firefox.desktop"
+      ]
+    },
+    {
+      "papel": "Burp Suite",
+      "candidatos": [
+        "kali-burpsuite.desktop",
+        "burpsuite.desktop",
+        "burpsuite-community.desktop",
+        "burp.desktop"
+      ]
+    }
+  ]
+}
