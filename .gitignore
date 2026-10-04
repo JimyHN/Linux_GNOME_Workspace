@@ -19,3 +19,6 @@ secrets/
 # Python
 __pycache__/
 *.pyc
+
+# salida de diagnostico pegada para depurar
+extension*.txt

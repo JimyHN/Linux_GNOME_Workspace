@@ -146,6 +146,26 @@ huecos y listados en el mismo orden en `custom-keybindings`: GNOME ignora
 toda entrada cuya ruta no aparezca ahí. Al quitar uno hay que renumerar los
 siguientes.
 
+## `gnome-extensions list` miente
+
+`extensiones_instaladas()` lee el **disco**, no el Shell. No lo cambies por
+`gnome-extensions list`.
+
+Ese comando pregunta al Shell por D-Bus, y el Shell solo conoce las
+extensiones que escaneó al arrancar. En Wayland no se puede reiniciar sin
+cerrar sesión, así que una extensión recién instalada **no aparece ahí**
+aunque esté en disco con su `metadata.json` válido. Comprobado creando una
+carpeta a mano: `list` no la ve, el disco sí.
+
+Esto causó el fallo que más tiempo costó encontrar. Las nueve extensiones se
+descargaban e instalaban bien —`gnome-extensions install` devolvía 0— y acto
+seguido `paso_dconf` las descartaba todas por "no instaladas", así que no se
+habilitaba ninguna. Con dash-to-panel entre las descartadas, el escritorio
+quedaba sin barra.
+
+Por lo mismo, `_instalar_zip()` no se fía del código de salida: comprueba que
+exista `metadata.json` en el destino y, si no está, descomprime a mano.
+
 ## Diagnóstico
 
 `python3 LGW_installer.py -d` prueba la cadena completa con una sola

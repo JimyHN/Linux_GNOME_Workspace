@@ -193,8 +193,27 @@ def monitor_actual() -> str | None:
 
 
 def extensiones_instaladas() -> set[str]:
-    return set(subprocess.run(["gnome-extensions", "list"],
-                              capture_output=True, text=True).stdout.split())
+    """Lee el DISCO, no el Shell. No cambies esto por 'gnome-extensions list'.
+
+    'gnome-extensions list' pregunta al Shell por D-Bus y el Shell solo
+    conoce lo que escaneo al arrancar. En Wayland no se puede reiniciar sin
+    cerrar sesion, asi que una extension recien instalada NO aparece ahi,
+    aunque este en disco con su metadata.json. Comprobado.
+
+    Era la causa de que no se habilitara ninguna: se instalaban las nueve
+    correctamente y acto seguido se descartaban por "no instaladas"."""
+    encontradas: set[str] = set()
+    bases = [Path.home() / ".local/share/gnome-shell/extensions"]
+    for d in os.environ.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share").split(":"):
+        if d:
+            bases.append(Path(d) / "gnome-shell/extensions")
+    for base in bases:
+        if not base.is_dir():
+            continue
+        for carpeta in base.iterdir():
+            if (carpeta / "metadata.json").is_file():
+                encontradas.add(carpeta.name)
+    return encontradas
 
 
 # ---------------------------------------------------------------------------
@@ -388,20 +407,27 @@ def _instalar_zip(x: Ctx, uuid: str, datos: bytes) -> None:
     with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as f:
         f.write(datos)
         tmp = f.name
+    destino = Path.home() / ".local/share/gnome-shell/extensions" / uuid
     try:
         try:
             x.correr(["gnome-extensions", "install", "--force", tmp])
-            return
         except Fallo as e:
             x.c.detalle(f"gnome-extensions install fallo ({e}); se descomprime a mano")
 
-        destino = Path.home() / ".local/share/gnome-shell/extensions" / uuid
+        # No vale fiarse del codigo de salida: se comprueba que el
+        # metadata.json este en disco, que es lo unico que importa.
+        if (destino / "metadata.json").is_file():
+            return
+
+        x.c.detalle("no hay metadata.json tras el install; se descomprime a mano")
         destino.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(tmp) as z:
             z.extractall(destino)
         schemas = destino / "schemas"
         if schemas.is_dir() and shutil.which("glib-compile-schemas"):
             x.correr(["glib-compile-schemas", str(schemas)], tolerante=True)
+        if not (destino / "metadata.json").is_file():
+            raise Fallo(f"el zip no dejo metadata.json en {destino}")
     finally:
         Path(tmp).unlink(missing_ok=True)
 
@@ -885,12 +911,18 @@ def diagnosticar(c: Consola) -> int:
         Path(tmp).unlink(missing_ok=True)
 
     c.paso("Resultado")
-    if uuid in extensiones_instaladas():
-        c.ok(f"{uuid} aparece ya instalada: la cadena completa funciona")
-        c.info("si el instalador falla con esto funcionando, pasame su salida con -v")
+    en_disco = (Path.home() / ".local/share/gnome-shell/extensions" / uuid
+                / "metadata.json").is_file()
+    via_shell = uuid in subprocess.run(["gnome-extensions", "list"],
+                                       capture_output=True, text=True).stdout.split()
+    c.entrada("En disco", "sí" if en_disco else "NO")
+    c.entrada("La ve el Shell", "sí" if via_shell else "no (normal hasta reiniciar sesion)")
+    if en_disco:
+        c.ok("la cadena completa funciona: la extension esta instalada")
+        if not via_shell:
+            c.info("el Shell no la vera hasta que cierres sesion; no es un error")
     else:
-        c.error(f"{uuid} no aparece instalada aun despues de todo lo anterior")
-        c.info("pega esta salida entera y lo cierro")
+        c.error("nada en disco: aqui si hay un problema real de instalacion")
     return 0
 
 
