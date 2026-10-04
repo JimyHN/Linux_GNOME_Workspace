@@ -75,6 +75,11 @@ pantalla, y `edge-tiling` desactivado para que mande Tiling Assistant.
 **Sublime Text**, desde el repositorio oficial de sublimehq con la clave GPG
 en `/etc/apt/keyrings` (nada de `apt-key`).
 
+**Firefox** con las pestañas a la izquierda y tres extensiones: Wappalyzer,
+Container proxy y Firefox Multi-Account Containers. Las pestañas verticales
+son nativas desde Firefox 136; las extensiones se declaran por política
+empresarial, así que Firefox las instala solo al arrancar.
+
 ## Opciones
 
 ```

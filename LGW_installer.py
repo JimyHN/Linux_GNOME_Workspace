@@ -103,6 +103,11 @@ class Ctx:
                     "se necesita una contraseña", "lo siento, int")):
                 raise Fallo("contraseña de sudo incorrecta o caducada; "
                             "vuelve a lanzar el instalador")
+            # Pasa al ejecutar sin tty: por SSH sin -t, desde un hook o un
+            # editor. El mensaje de sudo no deja claro que hacer.
+            if "terminal is required" in motivo.lower() or "se requiere un terminal" in motivo.lower():
+                raise Fallo("sudo no puede pedir la contraseña sin terminal; "
+                            "lanza el instalador desde una terminal interactiva")
             if not tolerante:
                 raise Fallo(motivo.splitlines()[-1] if motivo else f"codigo {r.returncode}")
         return r.stdout
@@ -694,6 +699,125 @@ def paso_extensiones(x: Ctx) -> None:
         c.info("GNOME las carga al reiniciar la sesion, no antes")
 
 
+AMO = "https://addons.mozilla.org/firefox/downloads/latest"
+
+# Donde cada empaquetado de Firefox guarda los perfiles y lee las politicas.
+FIREFOX_PERFILES = [
+    "~/snap/firefox/common/.mozilla/firefox",          # snap de Ubuntu
+    "~/.mozilla/firefox",                               # deb, firefox-esr de Kali
+    "~/.var/app/org.mozilla.firefox/.mozilla/firefox",  # flatpak
+]
+FIREFOX_POLITICAS = ["/etc/firefox/policies", "/etc/firefox-esr/policies"]
+
+
+def perfiles_firefox() -> list[Path]:
+    """Perfiles reales, leidos de profiles.ini para no colar carpetas sueltas."""
+    fuera = []
+    for base in FIREFOX_PERFILES:
+        raiz = Path(base).expanduser()
+        ini = raiz / "profiles.ini"
+        if not ini.is_file():
+            continue
+        for linea in ini.read_text(errors="replace").splitlines():
+            if linea.startswith("Path="):
+                ruta = linea.split("=", 1)[1].strip()
+                perfil = Path(ruta) if ruta.startswith("/") else raiz / ruta
+                if perfil.is_dir():
+                    fuera.append(perfil)
+    return fuera
+
+
+def paso_firefox(x: Ctx) -> None:
+    c = x.c
+    try:
+        cfg = json.loads((DATA / "firefox.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        raise Fallo("no se pudo leer data/firefox.json")
+
+    # --- pestañas verticales, por perfil ---
+    perfiles = perfiles_firefox()
+    if not perfiles:
+        c.aviso("no hay ningun perfil de Firefox todavia")
+        x.notas.append("abre Firefox una vez y repite: python3 LGW_installer.py "
+                       "--only firefox")
+    else:
+        lineas = "".join(
+            f'user_pref("{k}", {json.dumps(v)});\n' for k, v in cfg["prefs"].items())
+        cabecera = ("// Generado por LGW_installer.py\n"
+                    "// Pestañas verticales nativas (Firefox 136+).\n")
+        for perfil in perfiles:
+            destino = perfil / "user.js"
+            c.accion("Configurando", f"pestañas a la izquierda → {perfil.name}")
+            if x.dry_run:
+                continue
+            previo = destino.read_text(errors="replace") if destino.is_file() else ""
+            # Quitar solo nuestras claves y conservar lo que hubiera puesto el
+            # usuario a mano en user.js.
+            conservado = "\n".join(
+                l for l in previo.splitlines()
+                if not any(f'"{k}"' in l for k in cfg["prefs"])
+                and not l.startswith("// Generado por LGW_installer.py")
+                and not l.startswith("// Pestañas verticales"))
+            destino.write_text(cabecera + lineas
+                               + (conservado.strip() + "\n" if conservado.strip() else ""))
+        c.ok(f"pestañas verticales en {len(perfiles)} perfil"
+             f"{'es' if len(perfiles) != 1 else ''}")
+
+    # --- extensiones, por politica empresarial ---
+    exts = cfg.get("extensiones", [])
+    if not exts:
+        c.saltado("no hay extensiones de Firefox que instalar")
+        return
+
+    ajustes = {
+        e["id"]: {"installation_mode": "normal_installed",
+                  "install_url": f"{AMO}/{e['slug']}/latest.xpi"}
+        for e in exts
+    }
+    for e in exts:
+        c.accion("Instalando", f"{e['nombre']}")
+
+    destinos = [Path(d) for d in FIREFOX_POLITICAS
+                if Path(d).parent.is_dir() or Path(d).is_dir()]
+    if not destinos:
+        destinos = [Path(FIREFOX_POLITICAS[0])]
+
+    escritos = 0
+    for carpeta in destinos:
+        fichero = carpeta / "policies.json"
+        # Fusionar: si ya hay politicas puestas a mano, no se pisan.
+        actual: dict = {}
+        if fichero.is_file():
+            try:
+                actual = json.loads(fichero.read_text())
+            except json.JSONDecodeError:
+                c.aviso(f"{fichero} no es JSON valido; se reescribe")
+        pol = actual.setdefault("policies", {})
+        pol.setdefault("ExtensionSettings", {}).update(ajustes)
+
+        texto = json.dumps(actual, indent=2, ensure_ascii=False) + "\n"
+        c.accion("Escribiendo", str(fichero))
+        if x.dry_run:
+            escritos += 1
+            continue
+        tmp = Path(tempfile.mkstemp(suffix=".json")[1])
+        tmp.write_text(texto)
+        try:
+            x.correr(["install", "-D", "-m", "0644", str(tmp), str(fichero)], root=True)
+            escritos += 1
+        except Fallo as err:
+            c.aviso(f"{fichero}: {err}")
+        finally:
+            tmp.unlink(missing_ok=True)
+
+    if escritos:
+        c.ok(f"{len(exts)} extensiones declaradas en {escritos} ruta"
+             f"{'s' if escritos != 1 else ''} de politicas")
+        c.info("Firefox las descarga e instala al proximo arranque")
+    else:
+        raise Fallo("no se pudo escribir ninguna politica de Firefox")
+
+
 def _remapear_monitor(contenido: str, monitor: str | None) -> tuple[str, str | None]:
     """Reescribe las claves de dash-to-panel al monitor de esta maquina.
 
@@ -949,6 +1073,7 @@ PASOS = [
     ("sublime",        "Sublime Text", paso_sublime),
     ("extensiones",    "Extensiones de GNOME Shell", paso_extensiones),
     ("ajustes",        "Ajustes de escritorio, atajos y extensiones", paso_dconf),
+    ("firefox",        "Firefox: pestañas verticales y extensiones", paso_firefox),
     ("retoques",       "Retoques dependientes de la maquina", paso_retoques),
 ]
 

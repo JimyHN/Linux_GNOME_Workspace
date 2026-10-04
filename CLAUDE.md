@@ -214,6 +214,33 @@ quedaba sin barra.
 Por lo mismo, `_instalar_zip()` no se fía del código de salida: comprueba que
 exista `metadata.json` en el destino y, si no está, descomprime a mano.
 
+## Firefox
+
+`paso_firefox` hace dos cosas con fuentes distintas a propósito.
+
+**Pestañas a la izquierda**: `sidebar.revamp` y `sidebar.verticalTabs` en el
+`user.js` de cada perfil. Desde Firefox 136 las pestañas verticales son
+nativas, así que no hace falta `userChrome.css`. No se pueden poner por
+política: la lista blanca de la política `Preferences` no incluye el prefijo
+`sidebar.`.
+
+Los perfiles se leen de `profiles.ini`, no listando carpetas, y el `user.js`
+se reescribe conservando las líneas que no sean nuestras.
+
+**Extensiones**: política empresarial en `/etc/firefox/policies/policies.json`
+(y la variante `firefox-esr` de Kali), con `ExtensionSettings` e
+`installation_mode: normal_installed`. Es la única forma sin clics: desde
+Firefox 74 no vale dejar un `.xpi` en el perfil porque el sideload está
+desactivado. Se usa `normal_installed` y no `force_installed` para que se
+puedan desinstalar a mano.
+
+El fichero se **fusiona**, no se sobrescribe: si hay políticas puestas por
+otro motivo, se conservan.
+
+Requiere sudo. El snap de Ubuntu lee `/etc/firefox` porque tiene conectada la
+interfaz `system-files` llamada `etc-firefox`; compruébalo con
+`snap connections firefox` si deja de funcionar.
+
 ## Iconos de la barra
 
 `favorite-apps` se construye en la máquina destino con

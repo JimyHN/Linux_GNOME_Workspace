@@ -1,0 +1,35 @@
+{
+  "_comentario": [
+    "Pestanas verticales: desde Firefox 136 son nativas y basta con estas",
+    "dos prefs. No hace falta userChrome.css. Van en user.js del perfil",
+    "porque la politica Preferences de Firefox no admite el prefijo",
+    "'sidebar.' (su lista blanca solo cubre browser., dom., extensions.,",
+    "network., ui. y unos pocos mas).",
+    "",
+    "Extensiones: se instalan por politica empresarial, que es la unica",
+    "forma sin clics. Desde Firefox 74 no se puede dejar un .xpi en el",
+    "perfil: el sideload esta desactivado. installation_mode normal_installed",
+    "las instala pero deja desinstalarlas; force_installed lo impediria."
+  ],
+  "prefs": {
+    "sidebar.revamp": true,
+    "sidebar.verticalTabs": true
+  },
+  "extensiones": [
+    {
+      "nombre": "Wappalyzer",
+      "id": "wappalyzer@crunchlabz.com",
+      "slug": "wappalyzer"
+    },
+    {
+      "nombre": "Container proxy",
+      "id": "contaner-proxy@bekh-ivanov.me",
+      "slug": "container-proxy"
+    },
+    {
+      "nombre": "Firefox Multi-Account Containers",
+      "id": "@testpilot-containers",
+      "slug": "multi-account-containers"
+    }
+  ]
+}
