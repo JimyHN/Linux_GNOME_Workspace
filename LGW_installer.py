@@ -1272,7 +1272,7 @@ PASOS = [
     ("sublime",        "Sublime Text", paso_sublime),
     ("extensiones",    "Extensiones de GNOME Shell", paso_extensiones),
     ("ajustes",        "Ajustes de escritorio, atajos y extensiones", paso_dconf),
-    ("firefox",        "Firefox: pestañas verticales y extensiones", paso_firefox),
+    ("firefox",        "Firefox: extensiones y contenedores", paso_firefox),
     ("retoques",       "Retoques dependientes de la maquina", paso_retoques),
     ("sistema",        "Actualizacion del sistema", paso_sistema),
 ]

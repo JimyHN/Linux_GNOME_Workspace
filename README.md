@@ -130,3 +130,9 @@ vez de fallar en silencio.
 ## Licencia
 
 MIT
+
+## Pasos manuales
+
+Lo que no se automatiza (pestañas verticales de Firefox, certificado CA de
+BurpSuite, permisos de las extensiones y el proxy de Container Proxy) está
+paso a paso en [GUIA-MANUAL.txt](GUIA-MANUAL.txt).

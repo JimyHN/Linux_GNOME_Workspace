@@ -1,0 +1,94 @@
+=========================================================================
+ Linux_GNOME_Workspace — pasos manuales
+=========================================================================
+
+Lo que el instalador NO hace (porque no se puede de forma fiable desde un
+script) y tienes que hacer tu a mano. Son rapidos.
+
+
+-------------------------------------------------------------------------
+ 1. PESTAÑAS VERTICALES EN FIREFOX (a la izquierda)
+-------------------------------------------------------------------------
+
+Firefox ESR 140 ya las trae; solo hay que activarlas:
+
+  Opcion A — por Ajustes (la mas comoda)
+    1. Abre Firefox.
+    2. Menu (tres rayas, arriba a la derecha) -> Ajustes.
+       O escribe en la barra:  about:preferences
+    3. Seccion "General".
+    4. Baja hasta "Diseño del navegador" (Browser Layout).
+    5. Marca "Pestañas verticales" (Vertical tabs).
+    Las pestañas se van a la izquierda al instante.
+
+  Opcion B — por about:config (si no aparece lo anterior)
+    1. Barra de direcciones:  about:config  -> "Aceptar el riesgo".
+    2. Busca   sidebar.revamp        -> ponlo en true
+    3. Busca   sidebar.verticalTabs  -> ponlo en true
+    4. Cierra Firefox del todo y vuelve a abrirlo.
+
+  Para mostrar/ocultar la barra lateral: boton de barra lateral en la
+  barra de herramientas, o atajo segun tu version.
+
+
+-------------------------------------------------------------------------
+ 2. CERTIFICADO CA DE BURPSUITE EN FIREFOX
+-------------------------------------------------------------------------
+
+Sin esto, Firefox marca error de certificado en todo el HTTPS que pase
+por Burp. Hay que importar la CA de Burp y marcarla como de confianza.
+
+  Requisito: Burp abierto y el proxy escuchando en 127.0.0.1:8080, y
+  Firefox enrutado a ese proxy (con FoxyProxy o Container Proxy, en el
+  contenedor BurpSuite).
+
+  Pasos:
+    1. Con el proxy de Burp activo en Firefox, entra a:
+           http://burp
+       (o http://burpsuite ). Sale la pagina "Burp Suite".
+    2. Arriba a la derecha, boton "CA Certificate": descarga el fichero
+       cacert.der.
+    3. Firefox -> Ajustes -> "Privacidad y seguridad".
+    4. Baja hasta "Certificados" -> boton "Ver certificados...".
+    5. Pestaña "Autoridades" -> boton "Importar...".
+    6. Elige el cacert.der que descargaste.
+    7. Marca la casilla:
+           [x] Confiar en esta CA para identificar sitios web
+       y pulsa "Aceptar".
+    8. Reinicia Firefox. Ya puedes interceptar HTTPS sin avisos.
+
+
+-------------------------------------------------------------------------
+ 3. PERMISOS DE LAS EXTENSIONES DE FIREFOX
+-------------------------------------------------------------------------
+
+Si una extension dice "No puede leer ni cambiar datos en este sitio",
+hay que darle permiso sobre las paginas:
+
+    1. Menu -> Extensiones y temas (o escribe about:addons).
+    2. Pincha la extension (Wappalyzer, Container Proxy, FoxyProxy...).
+    3. Pestaña "Permisos".
+    4. Activa "Acceder a tus datos para todos los sitios web"
+       (o el permiso de host que ofrezca).
+
+  Tambien puedes hacerlo por sitio: click en el icono de la extension en
+  la barra -> el engranaje -> "Siempre permitir en este sitio".
+
+
+-------------------------------------------------------------------------
+ 4. CONTAINER PROXY — crear el proxy de BurpSuite
+-------------------------------------------------------------------------
+
+Los contenedores (Proxy 1, Proxy 2, BurpSuite1, BurpSuite2) ya los crea
+el instalador. El proxy en si se añade a mano:
+
+    1. Abre la extension "Container Proxy" en el navegador.
+    2. Ve a "Proxies" -> boton "+".
+    3. Rellena:
+           Titulo:    BurpSuite
+           Protocolo: HTTP
+           Servidor:  localhost
+           Puerto:    8080
+       Guardar.
+    4. Ve a "Asignar" y pon los contenedores BurpSuite usando ese proxy
+       (en vez de "Directamente").
