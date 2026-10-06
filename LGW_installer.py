@@ -36,6 +36,9 @@ from lgw.ui import Consola  # noqa: E402
 RAIZ = Path(__file__).resolve().parent
 DATA = RAIZ / "data"
 EGO = "https://extensions.gnome.org"
+# Segundos de espera a que respondas al dialogo de instalar una extension
+# o cualquier otro paso interactivo antes de saltarlo.
+TIMEOUT_DIALOGO = 180
 
 # El respaldo vive fuera del repo: si se guardase dentro, un git clean o un
 # pull con conflictos se lo llevaria por delante justo cuando hace falta.
@@ -74,6 +77,7 @@ class Ctx:
         self.c = consola
         self.dry_run = dry_run
         self.reconfigurar = reconfigurar
+        self.asumir_si = False
         self.perfil: dict = {}
         self.so: str = ""
         self.hechos = 0
@@ -535,6 +539,51 @@ def _instalar_zip(x: Ctx, uuid: str, datos: bytes) -> None:
         Path(tmp).unlink(missing_ok=True)
 
 
+def shell_accesible() -> bool:
+    """Si hay un GNOME Shell vivo en el bus de sesion al que pedirle cosas."""
+    if not shutil.which("gdbus"):
+        return False
+    r = subprocess.run(
+        ["gdbus", "call", "--session", "--dest", "org.gnome.Shell",
+         "--object-path", "/org/gnome/Shell", "--method",
+         "org.freedesktop.DBus.Properties.Get",
+         "org.gnome.Shell.Extensions", "ShellVersion"],
+        capture_output=True, text=True)
+    return r.returncode == 0
+
+
+def extensiones_en_shell() -> set[str]:
+    """Lo que el Shell tiene cargado AHORA (via D-Bus), no lo que hay en disco."""
+    return set(subprocess.run(["gnome-extensions", "list"],
+                              capture_output=True, text=True).stdout.split())
+
+
+def _instalar_via_shell(x: Ctx, uuid: str) -> str:
+    """Pide al Shell que instale la extension, como el interruptor de la web.
+
+    Abre el dialogo nativo de GNOME; al darle a Instalar, la extension se
+    descarga, se instala Y se carga en vivo, sin cerrar sesion. Devuelve
+    'ok', 'cancel', 'timeout' o un texto de error."""
+    if x.dry_run:
+        x.c.detalle(f"(dry-run) InstallRemoteExtension {uuid}")
+        return "ok"
+    try:
+        r = subprocess.run(
+            ["gdbus", "call", "--session", "--dest", "org.gnome.Shell",
+             "--object-path", "/org/gnome/Shell", "--method",
+             "org.gnome.Shell.Extensions.InstallRemoteExtension", uuid],
+            capture_output=True, text=True, timeout=TIMEOUT_DIALOGO)
+    except subprocess.TimeoutExpired:
+        return "timeout"
+    salida = (r.stdout + r.stderr).strip()
+    x.c.detalle(salida)
+    if "successful" in salida:
+        return "ok"
+    if "cancelled" in salida:
+        return "cancel"
+    return salida.splitlines()[-1] if salida else f"codigo {r.returncode}"
+
+
 def _escribir_txt_extensiones(x: Ctx, ver: str, registro: list[str]) -> None:
     """Deja en la raiz del repo un txt con una extension por fila.
 
@@ -576,92 +625,81 @@ def paso_extensiones(x: Ctx) -> None:
         return
 
     ver = version_shell()
-    instaladas = extensiones_instaladas()
-    puestas, sin_build, con_error = [], [], []
-    registro: list[str] = []  # una linea por extension para el txt
+    via_vivo = shell_accesible()
+    en_shell = extensiones_en_shell() if via_vivo else set()
+    puestas, saltadas, con_error = [], [], []
+    registro: list[str] = []
 
-    c.info("descarga directa: GNOME las carga al reiniciar la sesion")
+    if via_vivo:
+        c.info("instalacion en vivo: dale a Instalar en el dialogo de cada una "
+               f"(se salta sola a los {TIMEOUT_DIALOGO}s sin respuesta)")
+    else:
+        c.aviso("no hay GNOME Shell en el bus de sesion; se bajan a disco y haran "
+                "falta cerrar sesion para que carguen")
 
     for e in lista:
         uuid, nombre = e["uuid"], e["nombre"]
-        if uuid in instaladas:
-            c.saltado(f"{nombre} ya instalada")
-            registro.append(f"ya-estaba   {uuid}")
+
+        if via_vivo:
+            if uuid in en_shell:
+                c.saltado(f"{nombre} ya instalada y activa")
+                registro.append(f"ya-estaba   {uuid}")
+                continue
+            c.accion("Instalando", f"{nombre}  (dale a Instalar)")
+            res = _instalar_via_shell(x, uuid)
+            if res == "ok":
+                c.ok(f"{nombre} instalada y activa")
+                puestas.append(uuid)
+                registro.append(f"instalada   {uuid}  (en vivo)")
+            elif res == "cancel":
+                c.aviso(f"{nombre}: cancelada en el dialogo")
+                saltadas.append(nombre)
+                registro.append(f"cancelada   {uuid}")
+            elif res == "timeout":
+                c.aviso(f"{nombre}: sin respuesta en {TIMEOUT_DIALOGO}s, se salta")
+                saltadas.append(nombre)
+                registro.append(f"timeout     {uuid}")
+            else:
+                c.error(f"{nombre}: {res}")
+                con_error.append(nombre)
+                registro.append(f"ERROR       {uuid}  ({res})")
             continue
 
-        c.accion("Consultando", f"{nombre}")
+        # Sin Shell en el bus: descarga directa a disco (requiere cerrar sesion).
+        instaladas = extensiones_instaladas()
+        if uuid in instaladas:
+            c.saltado(f"{nombre} ya en disco")
+            registro.append(f"ya-estaba   {uuid}")
+            continue
+        c.accion("Descargando", nombre)
         url = f"{EGO}/extension-info/?uuid={urllib.parse.quote(uuid)}&shell_version={ver}"
         try:
             info = json.loads(abrir(url).read())
-        except urllib.error.HTTPError as err:
-            if err.code == 404:
-                # Puede que la extension exista pero no para esta version de
-                # GNOME. Distinguirlo cambia por completo el consejo a dar.
-                try:
-                    generico = json.loads(abrir(
-                        f"{EGO}/extension-info/?uuid={urllib.parse.quote(uuid)}").read())
-                    compat = ", ".join(sorted(generico.get("shell_version_map", {}),
-                                              key=lambda v: [int(n) for n in v.split(".")]))
-                    c.aviso(f"{nombre}: no hay build para GNOME {ver} "
-                            f"(disponible para {compat or 'ninguna version conocida'})")
-                except (urllib.error.URLError, json.JSONDecodeError, ValueError):
-                    c.aviso(f"{nombre}: no hay build para GNOME {ver}")
-                sin_build.append(nombre)
-                registro.append(f"sin-build   {uuid}  (no hay para GNOME {ver})")
-            else:
-                c.error(f"{nombre}: HTTP {err.code} al consultar la API")
-                con_error.append(nombre)
-                registro.append(f"ERROR       {uuid}  (HTTP {err.code})")
-            continue
-        except urllib.error.URLError as err:
-            c.error(f"{nombre}: sin conexion con extensions.gnome.org ({err.reason})")
-            con_error.append(nombre)
-            registro.append(f"ERROR       {uuid}  (sin conexion)")
-            continue
-        except json.JSONDecodeError:
-            c.error(f"{nombre}: la API devolvio algo que no es JSON")
-            con_error.append(nombre)
-            registro.append(f"ERROR       {uuid}  (respuesta no-JSON de la API)")
-            continue
-
-        descarga = info.get("download_url")
-        if not descarga:
-            c.aviso(f"{nombre}: la API no da enlace de descarga para GNOME {ver}")
-            sin_build.append(nombre)
-            registro.append(f"sin-build   {uuid}  (no hay para GNOME {ver})")
-            continue
-
-        c.accion("Instalando", f"{nombre} v{info.get('version', '?')}")
-        if x.dry_run:
-            puestas.append(uuid)
-            continue
-        try:
+            descarga = info.get("download_url")
+            if not descarga:
+                raise Fallo(f"no hay build para GNOME {ver}")
             datos = abrir(EGO + descarga, timeout=120).read()
-            c.detalle(f"{len(datos) // 1024} KB descargados")
             _instalar_zip(x, uuid, datos)
+            puestas.append(uuid)
+            registro.append(f"descargada  {uuid}  v{info.get('version', '?')}")
         except (urllib.error.URLError, Fallo, zipfile.BadZipFile, OSError) as err:
             c.error(f"{nombre}: {err}")
             con_error.append(nombre)
             registro.append(f"ERROR       {uuid}  ({err})")
-            continue
-        puestas.append(uuid)
-        registro.append(f"descargada  {uuid}  v{info.get('version', '?')}")
 
     x.extensiones_puestas = puestas
     _escribir_txt_extensiones(x, ver, registro)
+
     if puestas:
         c.ok(f"{len(puestas)} extensiones instaladas")
-    if sin_build:
-        x.notas.append(f"sin build para GNOME {ver}: {', '.join(sin_build)}. "
-                       "Instalalas a mano desde extensions.gnome.org o quitalas "
-                       "de data/extensions.json")
+    if saltadas:
+        x.notas.append(f"extensiones sin instalar (canceladas o sin respuesta): "
+                       f"{', '.join(saltadas)}. Vuelve a lanzar el instalador para esas")
     if con_error:
         x.fallos += len(con_error)
-        x.notas.append(f"fallaron por red o instalacion: {', '.join(con_error)}. "
-                       "Repite con -v para ver el detalle")
-    if not puestas and not sin_build and not con_error:
-        c.info("no habia nada que instalar: ya estaban todas")
-    c.info("GNOME las carga al reiniciar la sesion, no antes")
+        x.notas.append(f"extensiones con error: {', '.join(con_error)}")
+    if not via_vivo and puestas:
+        c.info("cierra sesion y vuelve a entrar para que GNOME las cargue")
 
 
 AMO = "https://addons.mozilla.org/firefox/downloads/latest"
@@ -690,6 +728,58 @@ def perfiles_firefox() -> list[Path]:
                 if perfil.is_dir():
                     fuera.append(perfil)
     return fuera
+
+
+def _crear_contenedores(x: Ctx, perfil: Path, contenedores: list[dict]) -> None:
+    """Crea contenedores de Multi-Account Containers en containers.json.
+
+    Es el fichero de la API de identidades de Firefox; escribirlo es la via
+    sin GUI. Lo que NO se puede pre-cargar es la config de Container-proxy o
+    FoxyProxy (vive en el IndexedDB de cada extension). Idempotente por
+    nombre. Firefox tiene que estar cerrado o reescribe el fichero al salir."""
+    c = x.c
+    if not contenedores:
+        return
+    f = perfil / "containers.json"
+    try:
+        datos = json.loads(f.read_text()) if f.is_file() else {}
+    except (OSError, json.JSONDecodeError):
+        datos = {}
+    datos.setdefault("version", 6)
+    ids = datos.setdefault("identities", [])
+
+    # Los contenedores internos de Firefox (thumbnail...) usan ids reservados
+    # enormes (~2^32). Los publicos van 1, 2, 3... Hay que ignorar los grandes
+    # o el siguiente id se dispararia.
+    def _sano(n: object) -> bool:
+        return isinstance(n, int) and 0 < n < (1 << 20)
+
+    existentes = {i.get("name") for i in ids if i.get("public")}
+    publicos = [i["userContextId"] for i in ids
+                if i.get("public") and _sano(i.get("userContextId"))]
+    ultimo = datos.get("lastUserContextId", 0)
+    siguiente = max(publicos + ([ultimo] if _sano(ultimo) else []) + [0])
+    nuevos = []
+    for cont in contenedores:
+        if cont["name"] in existentes:
+            c.saltado(f"contenedor {cont['name']} ya existe")
+            continue
+        siguiente += 1
+        ids.append({
+            "userContextId": siguiente,
+            "public": True,
+            "icon": cont["icon"],
+            "color": cont["color"],
+            "name": cont["name"],
+        })
+        nuevos.append(cont["name"])
+    datos["lastUserContextId"] = siguiente
+
+    if nuevos:
+        c.accion("Creando", f"contenedores: {', '.join(nuevos)}")
+        if not x.dry_run:
+            f.write_text(json.dumps(datos, indent=2, ensure_ascii=False) + "\n")
+        c.ok(f"{len(nuevos)} contenedores creados")
 
 
 def paso_firefox(x: Ctx) -> None:
@@ -758,6 +848,8 @@ def paso_firefox(x: Ctx) -> None:
             xpi.write_bytes(datos)
             c.ok(f"{e['nombre']} ({len(datos) // 1024} KB)")
             puestas += 1
+
+        _crear_contenedores(x, perfil, cfg.get("contenedores", []))
 
     if puestas:
         c.ok(f"{puestas} extensiones de Firefox puestas")
@@ -1068,6 +1160,44 @@ def paso_retoques(x: Ctx) -> None:
             c.aviso("no se pudo actualizar el manifiesto de respaldo")
 
 
+def paso_sistema(x: Ctx) -> None:
+    """Ultimo paso: actualizar el sistema o instalar las herramientas de Kali.
+
+    Son operaciones enormes (GB), asi que con -y NO se lanzan solas: se
+    preguntan siempre. Es una bifurcacion, no un si-a-todo."""
+    c = x.c
+    if x.dry_run:
+        c.saltado("simulacion: no se pregunta por actualizaciones")
+        return
+    if x.asumir_si:
+        c.saltado("con -y no se tocan las actualizaciones (son enormes); "
+                  "lanza sin -y para el update del sistema o kali-linux-large")
+        return
+
+    if c.preguntar("¿Quieres actualizar los sistemas?", por_defecto=False):
+        c.accion("Actualizando", "indices de apt")
+        x.correr(["apt-get", "update", "-y"], root=True, tolerante=True)
+        c.accion("Actualizando", "full-upgrade (puede tardar un buen rato)")
+        try:
+            x.correr(["apt-get", "full-upgrade", "-y"], root=True)
+            c.ok("sistema actualizado")
+        except Fallo as e:
+            c.error(f"la actualizacion fallo: {e}")
+            x.fallos += 1
+        return
+
+    if c.preguntar("¿Quieres instalar las herramientas large de Kali?", por_defecto=False):
+        c.accion("Instalando", "kali-linux-large (descarga muy grande)")
+        try:
+            x.correr(["apt-get", "install", "-y", "kali-linux-large"], root=True)
+            c.ok("kali-linux-large instalado")
+        except Fallo as e:
+            c.error(f"no se pudo instalar kali-linux-large: {e}")
+            x.fallos += 1
+    else:
+        c.saltado("no se actualiza nada mas")
+
+
 PASOS = [
     ("comprobaciones", "Comprobaciones previas", paso_comprobaciones),
     ("respaldo",       "Respaldo del estado actual", paso_respaldo),
@@ -1077,6 +1207,7 @@ PASOS = [
     ("ajustes",        "Ajustes de escritorio, atajos y extensiones", paso_dconf),
     ("firefox",        "Firefox: pestañas verticales y extensiones", paso_firefox),
     ("retoques",       "Retoques dependientes de la maquina", paso_retoques),
+    ("sistema",        "Actualizacion del sistema", paso_sistema),
 ]
 
 
@@ -1197,12 +1328,54 @@ def construir_parser() -> argparse.ArgumentParser:
             "\n"
             "Al terminar hay que cerrar sesion y volver a entrar para que GNOME\n"
             "cargue las extensiones nuevas."),
-        **{"add_help": True},
+        add_help=False,
     )
+
+
+OPCIONES_AYUDA = [
+    ("-h, --help", "mostrar esta ayuda y salir"),
+    ("-y, --yes", "no preguntar nada: instalar y configurar todo"),
+    ("-r, --revert", "deshacer la instalacion y volver al estado anterior"),
+    ("-n, --dry-run", "simular sin modificar el sistema"),
+    ("-c, --configurar", "si algo ya esta con otra config, ajustarla sin preguntar"),
+    ("-so SISTEMA", "indicar el sistema (Kali o Ubuntu) y no preguntarlo"),
+    ("-v, --verbose", "mostrar la salida de los comandos"),
+    ("--no-color", "salida sin color (tambien se respeta NO_COLOR)"),
+]
+
+EJEMPLOS_AYUDA = [
+    ("python3 LGW_installer.py", "Pregunta que sistema es y lo instala todo."),
+    ("python3 LGW_installer.py -y", "Instala todo sin preguntar; detecta el sistema solo."),
+    ("python3 LGW_installer.py -so Kali", "Da por hecho el sistema y no lo pregunta."),
+    ("python3 LGW_installer.py -r", "Deshace la instalacion y vuelve al estado anterior."),
+    ("python3 LGW_installer.py -n", "Enseña lo que haria sin tocar nada."),
+    ("python3 LGW_installer.py -c", "Si algo tiene otra config, la ajusta sin preguntar."),
+]
+
+
+def imprimir_ayuda(c: Consola) -> None:
+    c.titulo("LGW · instalador del escritorio GNOME")
+    c.parrafo(
+        "Replica en esta maquina el escritorio GNOME de Linux_GNOME_Workspace:\n"
+        "extensiones, atajos de teclado, tema, Firefox y Sublime Text.\n"
+        "El fondo de pantalla no se toca. Antes de nada guarda un respaldo,\n"
+        "asi que --revert siempre puede dejar la maquina como estaba.")
+    c.paso("Uso")
+    c.parrafo("  python3 LGW_installer.py [opciones]")
+    c.paso("Opciones")
+    for flags, desc in OPCIONES_AYUDA:
+        c.opcion_ayuda(flags, desc)
+    c.paso("Ejemplos")
+    for cmd, desc in EJEMPLOS_AYUDA:
+        c.ejemplo(cmd, desc)
+    c.bruto()
+    c.info("al terminar, cierra sesion y vuelve a entrar para que GNOME cargue todo")
 
 
 def main() -> int:
     p = construir_parser()
+    p.add_argument("-h", "--help", action="store_true", dest="ayuda",
+                   help="mostrar esta ayuda y salir")
     p.add_argument("-y", "--yes", action="store_true",
                    help="no preguntar nada: instalar y configurar todo directamente")
     p.add_argument("-r", "--revert", action="store_true",
@@ -1221,6 +1394,10 @@ def main() -> int:
     args = p.parse_args()
 
     c = Consola(color=False if args.no_color else None, verboso=args.verbose)
+
+    if args.ayuda:
+        imprimir_ayuda(c)
+        return 0
 
     if args.revert:
         return revertir(c, args.yes, args.dry_run)
@@ -1245,6 +1422,7 @@ def main() -> int:
             return 130
 
     x = Ctx(c, args.dry_run, args.reconfigurar or args.yes)
+    x.asumir_si = args.yes
     x.so, x.perfil = so, perfil
     c.plan(len(PASOS))
     for nombre, desc, fn in PASOS:

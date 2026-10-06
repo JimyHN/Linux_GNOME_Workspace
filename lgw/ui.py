@@ -135,6 +135,17 @@ class Consola:
             linea += self._t(f"  ({nota})", "tenue")
         print(linea)
 
+    def parrafo(self, texto: str) -> None:
+        for linea in texto.splitlines():
+            print(self._t(linea, "texto"))
+
+    def ejemplo(self, cmd: str, desc: str) -> None:
+        print("  " + self._t(cmd, "ok"))
+        print("      " + self._t(desc, "tenue"))
+
+    def opcion_ayuda(self, flags: str, desc: str) -> None:
+        print("  " + self._t(f"{flags:<20}", "acento") + self._t(desc, "texto"))
+
     def pedir(self, texto: str, por_defecto: str = "") -> str:
         """Lee una respuesta libre. Enter devuelve el valor por defecto."""
         pista = f" [{por_defecto}]" if por_defecto else ""

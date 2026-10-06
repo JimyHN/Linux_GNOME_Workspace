@@ -172,36 +172,24 @@ huecos y listados en el mismo orden en `custom-keybindings`: GNOME ignora
 toda entrada cuya ruta no aparezca ahí. Al quitar uno hay que renumerar los
 siguientes.
 
-## Extensiones de GNOME: descarga directa
+## Extensiones de GNOME: instalacion en vivo
 
-Se baja el zip y se instala. Cero clics, pero hay que **cerrar sesión** al
-final porque el Shell solo escanea extensiones al arrancar.
+`paso_extensiones` usa `org.gnome.Shell.Extensions.InstallRemoteExtension`
+por D-Bus: es lo mismo que el interruptor de extensions.gnome.org. Abre el
+dialogo nativo de GNOME; al darle a Instalar (o Ctrl+Enter con el raton
+encima) la extension se descarga, instala **y carga en vivo, sin cerrar
+sesion**. Hay un timeout por extension (`TIMEOUT_DIALOGO`, 180 s): si no
+respondes al dialogo, se salta y sigue con la siguiente.
 
-La alternativa era `org.gnome.Shell.Extensions.InstallRemoteExtension`, que
-las deja cargadas al momento pero abre un diálogo de confirmación por
-extensión. Se descartó: siete diálogos son más trabajo que un cierre de
-sesión.
+Es lo que el usuario queria y se probo que funciona. El Ctrl+Enter **no se
+puede pulsar por software** (Mutter no implementa `virtual-keyboard` en
+Wayland: xdotool/wtype/ydotool no sirven), pero el usuario hace el clic, que
+es lo que pedia.
 
-Lo que no funciona, y está comprobado:
-
-- poner los ficheros en `~/.local/share/gnome-shell/extensions` no basta: el
-  Shell no los ve hasta reiniciar;
-- `ReloadExtension` responde `ReloadExtension is deprecated and does not work`;
-- añadir el UUID a `enabled-extensions` tampoco carga lo que no se escaneó;
-- en Wayland no se puede reiniciar el Shell sin cerrar sesión;
-- **el diálogo no se puede confirmar por software**: Mutter no implementa el
-  protocolo `virtual-keyboard` de Wayland, así que `xdotool` (solo X11),
-  `wtype` y `ydotool` no sirven. Es una barrera de seguridad, no una
-  dependencia que falte. No lo intentes otra vez.
-
-## extensiones_descargadas.txt
-
-`paso_extensiones` deja en la raíz del repo un `extensiones_descargadas.txt`
-con una extensión por fila: estado (`descargada` / `ya-estaba` / `sin-build`
-/ `ERROR`), UUID y `disco=si/no` según exista su `metadata.json`. Es registro
-y diagnóstico a la vez: si una sale `disco=si` pero GNOME no la enseña, el
-problema es de carga (cerrar sesión, `disable-user-extensions`), no de
-instalación. Está en `.gitignore`; no se commitea.
+Si no hay GNOME Shell en el bus de sesion (por SSH, por ejemplo), se cae a la
+descarga directa del zip a `~/.local/share/gnome-shell/extensions` y entonces
+si hace falta cerrar sesion. `_instalar_zip()` comprueba el `metadata.json`
+en disco, no el codigo de salida.
 
 ## `gnome-extensions list` miente
 
@@ -225,32 +213,31 @@ exista `metadata.json` en el destino y, si no está, descomprime a mano.
 
 ## Firefox
 
-`paso_firefox` hace dos cosas con fuentes distintas a propósito.
+`paso_firefox` hace tres cosas, todas sin GUI ni sudo:
 
 **Pestañas a la izquierda**: `sidebar.revamp` y `sidebar.verticalTabs` en el
-`user.js` de cada perfil. Desde Firefox 136 las pestañas verticales son
-nativas, así que no hace falta `userChrome.css`. No se pueden poner por
-política: la lista blanca de la política `Preferences` no incluye el prefijo
-`sidebar.`.
+`user.js` de cada perfil (nativas desde Firefox 136).
 
-Los perfiles se leen de `profiles.ini`, no listando carpetas, y el `user.js`
-se reescribe conservando las líneas que no sean nuestras.
+**Extensiones** (4): Multi-Account Containers, Container Proxy, FoxyProxy
+Standard y Wappalyzer. El `.xpi` se deja en `<perfil>/extensions/<guid>.xpi`
+con `extensions.autoDisableScopes=0`, que es lo que las activa sin aprobacion
+manual. Probado en Firefox 157: `active=True`, `location=app-profile`.
 
-**Extensiones**: el `.xpi` se deja en `<perfil>/extensions/<guid>.xpi` y se
-pone `extensions.autoDisableScopes` a `0`. Sin esa pref Firefox las deja
-desactivadas esperando aprobación manual. El nombre del fichero tiene que ser
-el guid exacto.
+**Contenedores** (`_crear_contenedores`): se escriben en
+`<perfil>/containers.json` (la API de identidades de Firefox). Proxy 1
+(azul, circle), Proxy 2 (purple, circle), BurpSuite1 (yellow, chill),
+BurpSuite2 (orange, chill). `chill` son las gafas. Los ids internos de
+Firefox usan numeros reservados enormes (~2^32): hay que excluirlos al
+calcular el siguiente id o se dispara. Idempotente por nombre; Firefox debe
+estar cerrado o reescribe el fichero al salir.
 
-Comprobado en Firefox 157 con un perfil desechable: la extensión queda
-`active=True` con `location=app-profile`. **No requiere sudo**, que es lo que
-descarta la alternativa: la política empresarial en `/etc/firefox/policies`
-necesita root, y en un entorno sin tty `sudo` falla con
-`a terminal is required to authenticate`.
+**Lo que NO se automatiza** (eleccion del usuario, no limitacion tecnica
+sola): la config interna de Container-proxy y FoxyProxy (proxies,
+asignaciones) vive en el IndexedDB de cada extension y no se pre-carga desde
+fuera. Y BurpSuite entero (BApp Store, ajustes) es GUI de Java sin CLI. Eso
+se queda manual y el instalador no lo toca.
 
-Lo que sí está muerto desde Firefox 74 es el sideload desde el directorio de
-la *aplicación*; el del perfil sigue vivo.
-
-## Iconos de la barra
+## Iconos de la barra## Iconos de la barra
 
 `favorite-apps` se construye en la máquina destino con
 `_resolver_favoritos()`, a partir de `data/favoritos.json`: cada entrada es
@@ -293,9 +280,12 @@ sobrescribe en silencio.
 
 ## Un solo flujo
 
-El instalador ejecuta **siempre los ocho pasos**. No hay `--only`, `--skip`
+El instalador ejecuta **siempre los nueve pasos** (el ultimo, `sistema`,
+pregunta si actualizar con `apt full-upgrade` o instalar `kali-linux-large`;
+con `-y` no se lanza porque son descargas de GB). No hay `--only`, `--skip`
 ni `--list-steps`: se quitaron a petición. Las banderas son `-h`, `-y`, `-r`,
-`-n`, `-c`, `-so`, `-v` y `--no-color`, y no se añaden más sin pedirlo.
+`-n`, `-c`, `-so`, `-v` y `--no-color`, y no se añaden más sin pedirlo. El
+`-h` se pinta en color como todo lo demas (`imprimir_ayuda`), sin blanco.
 
 Un paso que encuentra su trabajo ya hecho lo dice y sigue; no falla ni obliga
 a invocarlo aparte.

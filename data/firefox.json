@@ -1,18 +1,16 @@
 {
   "_comentario": [
-    "Pestanas verticales: desde Firefox 136 son nativas y basta con",
-    "sidebar.revamp y sidebar.verticalTabs. No hace falta userChrome.css.",
+    "prefs: pestanas verticales nativas (Firefox 136+) y autoDisableScopes=0",
+    "para que el .xpi dejado en <perfil>/extensions/<guid>.xpi se active solo.",
     "",
-    "extensions.autoDisableScopes=0 es lo que permite instalar extensiones",
-    "dejando el .xpi en <perfil>/extensions/<id>.xpi. Sin esa pref Firefox",
-    "las deja desactivadas esperando que el usuario las apruebe. Es la unica",
-    "via sin sudo y sin clics: la politica empresarial en /etc/firefox",
-    "necesita root, y el sideload desde el directorio de la aplicacion esta",
-    "desactivado desde Firefox 74. Comprobado en Firefox 157: la extension",
-    "queda active=True con location=app-profile.",
+    "contenedores: se escriben en <perfil>/containers.json (API de Firefox).",
+    "color validos: blue turquoise green yellow orange red pink purple.",
+    "icon validos: fingerprint briefcase dollar cart vacation gift food fruit",
+    "pet tree chill circle fence. 'chill' son las gafas de sol.",
     "",
-    "El id tiene que ser exactamente el guid de la extension, porque es el",
-    "nombre que Firefox espera en el fichero .xpi."
+    "La config INTERNA de Container-proxy y FoxyProxy (proxies, asignaciones)",
+    "vive en el almacenamiento IndexedDB de cada extension y no se puede",
+    "pre-cargar desde fuera: eso se queda para hacer a mano."
   ],
   "prefs": {
     "sidebar.revamp": true,
@@ -21,19 +19,46 @@
   },
   "extensiones": [
     {
-      "nombre": "Wappalyzer",
-      "id": "wappalyzer@crunchlabz.com",
-      "slug": "wappalyzer"
+      "nombre": "Firefox Multi-Account Containers",
+      "id": "@testpilot-containers",
+      "slug": "multi-account-containers"
     },
     {
-      "nombre": "Container proxy",
+      "nombre": "Container Proxy",
       "id": "contaner-proxy@bekh-ivanov.me",
       "slug": "container-proxy"
     },
     {
-      "nombre": "Firefox Multi-Account Containers",
-      "id": "@testpilot-containers",
-      "slug": "multi-account-containers"
+      "nombre": "FoxyProxy Standard",
+      "id": "foxyproxy@eric.h.jung",
+      "slug": "foxyproxy-standard"
+    },
+    {
+      "nombre": "Wappalyzer",
+      "id": "wappalyzer@crunchlabz.com",
+      "slug": "wappalyzer"
+    }
+  ],
+  "contenedores": [
+    {
+      "name": "Proxy 1",
+      "color": "blue",
+      "icon": "circle"
+    },
+    {
+      "name": "Proxy 2",
+      "color": "purple",
+      "icon": "circle"
+    },
+    {
+      "name": "BurpSuite1",
+      "color": "yellow",
+      "icon": "chill"
+    },
+    {
+      "name": "BurpSuite2",
+      "color": "orange",
+      "icon": "chill"
     }
   ]
 }
