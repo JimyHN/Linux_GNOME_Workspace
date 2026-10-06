@@ -1,20 +1,14 @@
 {
   "_comentario": [
-    "prefs: pestanas verticales nativas (Firefox 136+) y autoDisableScopes=0",
-    "para que el .xpi dejado en <perfil>/extensions/<guid>.xpi se active solo.",
+    "prefs: autoDisableScopes=0 para que el .xpi dejado en",
+    "<perfil>/extensions/<guid>.xpi se active solo. Las pestañas verticales NO",
+    "se tocan: se configuran a mano desde Ajustes de Firefox.",
     "",
     "contenedores: se escriben en <perfil>/containers.json (API de Firefox).",
-    "color validos: blue turquoise green yellow orange red pink purple.",
-    "icon validos: fingerprint briefcase dollar cart vacation gift food fruit",
-    "pet tree chill circle fence. 'chill' son las gafas de sol.",
-    "",
-    "La config INTERNA de Container-proxy y FoxyProxy (proxies, asignaciones)",
-    "vive en el almacenamiento IndexedDB de cada extension y no se puede",
-    "pre-cargar desde fuera: eso se queda para hacer a mano."
+    "La config interna de Container-proxy y FoxyProxy (proxies, asignaciones)",
+    "vive en el IndexedDB de cada extension y no se pre-carga desde fuera."
   ],
   "prefs": {
-    "sidebar.revamp": true,
-    "sidebar.verticalTabs": true,
     "extensions.autoDisableScopes": 0
   },
   "extensiones": [

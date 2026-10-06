@@ -881,14 +881,11 @@ def paso_firefox(x: Ctx) -> None:
     exts = cfg.get("extensiones", [])
     puestas = yaestaban = 0
 
-    # user.js solo se aplica al ARRANCAR Firefox, y un Firefox abierto reescribe
-    # prefs.js al cerrarse, pisando lo que pongamos. Por eso las pestañas no se
-    # movian: hay que cerrarlo y volver a abrirlo.
+    # autoDisableScopes se lee al arrancar Firefox; un Firefox abierto reescribe
+    # prefs.js al cerrarse. Mejor cerrarlo para que las extensiones se activen.
     if _firefox_corriendo():
-        c.aviso("Firefox esta abierto: cierralo del todo y vuelve a abrirlo al "
-                "final, o las pestañas verticales no se aplicaran")
-        x.notas.append("cierra Firefox por completo y vuelve a abrirlo: las pestañas "
-                       "a la izquierda solo se aplican al arrancar de cero")
+        c.aviso("Firefox esta abierto: cierralo y vuelve a abrirlo para que las "
+                "extensiones se activen")
 
     for perfil in perfiles:
         c.accion("Perfil", perfil.name)
@@ -897,12 +894,12 @@ def paso_firefox(x: Ctx) -> None:
         destino = perfil / "user.js"
         lineas = "".join(f'user_pref("{k}", {json.dumps(v)});\n' for k, v in prefs.items())
         cabecera = ("// Generado por LGW_installer.py\n"
-                    "// Pestañas verticales nativas (Firefox 136+) y sideload de xpi.\n")
+                    "// Activa las extensiones dejadas como .xpi en el perfil.\n")
         previo = destino.read_text(errors="replace") if destino.is_file() else ""
         if previo.startswith(cabecera) and lineas in previo:
-            c.info("pestañas a la izquierda ya configuradas (se ven al reiniciar Firefox)")
+            c.info("ajustes de extensiones ya puestos")
         else:
-            c.accion("Configurando", "pestañas a la izquierda (se ven al reiniciar Firefox)")
+            c.accion("Configurando", "ajustes para activar las extensiones")
             if not x.dry_run:
                 # Conservar lo que el usuario tuviera puesto a mano.
                 conservado = "\n".join(

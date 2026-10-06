@@ -220,13 +220,10 @@ exista `metadata.json` en el destino y, si no está, descomprime a mano.
 
 `paso_firefox` hace tres cosas, todas sin GUI ni sudo:
 
-**Pestañas a la izquierda**: `sidebar.revamp` y `sidebar.verticalTabs` en el
-`user.js` de cada perfil (nativas desde Firefox 136).
-
-Firefox tiene que estar CERRADO al correr el instalador: `user.js` solo se
-aplica al arrancar de cero y un Firefox abierto reescribe `prefs.js` al salir,
-pisando los cambios. `_firefox_corriendo()` avisa. Kali usa firefox-esr 140,
-que ya trae pestañas verticales (desde 136).
+Las pestañas verticales **no se tocan** (se quitaron a petición): se
+configuran a mano desde Ajustes → General → Diseño del navegador. Firefox
+conviene cerrarlo al instalar para que las extensiones se activen
+(`autoDisableScopes` se lee al arrancar); `_firefox_corriendo()` avisa.
 
 **Extensiones** (4): Multi-Account Containers, Container Proxy, FoxyProxy
 Standard y Wappalyzer. El `.xpi` se deja en `<perfil>/extensions/<guid>.xpi`
