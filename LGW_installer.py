@@ -535,6 +535,36 @@ def _instalar_zip(x: Ctx, uuid: str, datos: bytes) -> None:
         Path(tmp).unlink(missing_ok=True)
 
 
+def _escribir_txt_extensiones(x: Ctx, ver: str, registro: list[str]) -> None:
+    """Deja en la raiz del repo un txt con una extension por fila.
+
+    Doble funcion: registro de lo que se descargo y diagnostico. Junto a
+    cada UUID se apunta si su carpeta quedo en disco con metadata.json,
+    que es lo unico que GNOME necesita para cargarla al reiniciar sesion."""
+    base = Path.home() / ".local/share/gnome-shell/extensions"
+    salida = RAIZ / "extensiones_descargadas.txt"
+    cabecera = [
+        f"# Generado por LGW_installer.py · GNOME {ver}",
+        "# estado      uuid                                          en-disco",
+        "",
+    ]
+    cuerpo = []
+    for linea in registro:
+        uuid = linea.split()[1]
+        meta = base / uuid / "metadata.json"
+        marca = "si" if meta.is_file() else "NO"
+        cuerpo.append(f"{linea.split()[0]:<11} {uuid:<46} disco={marca}")
+    texto = "\n".join(cabecera + cuerpo) + "\n"
+    if x.dry_run:
+        x.c.detalle("(dry-run) no se escribe extensiones_descargadas.txt")
+        return
+    try:
+        salida.write_text(texto)
+        x.c.info(f"lista escrita en {salida.name}")
+    except OSError as e:
+        x.c.aviso(f"no se pudo escribir {salida.name}: {e}")
+
+
 def paso_extensiones(x: Ctx) -> None:
     c = x.c
     manifiesto = DATA / "extensions.json"
@@ -548,6 +578,7 @@ def paso_extensiones(x: Ctx) -> None:
     ver = version_shell()
     instaladas = extensiones_instaladas()
     puestas, sin_build, con_error = [], [], []
+    registro: list[str] = []  # una linea por extension para el txt
 
     c.info("descarga directa: GNOME las carga al reiniciar la sesion")
 
@@ -555,6 +586,7 @@ def paso_extensiones(x: Ctx) -> None:
         uuid, nombre = e["uuid"], e["nombre"]
         if uuid in instaladas:
             c.saltado(f"{nombre} ya instalada")
+            registro.append(f"ya-estaba   {uuid}")
             continue
 
         c.accion("Consultando", f"{nombre}")
@@ -575,23 +607,28 @@ def paso_extensiones(x: Ctx) -> None:
                 except (urllib.error.URLError, json.JSONDecodeError, ValueError):
                     c.aviso(f"{nombre}: no hay build para GNOME {ver}")
                 sin_build.append(nombre)
+                registro.append(f"sin-build   {uuid}  (no hay para GNOME {ver})")
             else:
                 c.error(f"{nombre}: HTTP {err.code} al consultar la API")
                 con_error.append(nombre)
+                registro.append(f"ERROR       {uuid}  (HTTP {err.code})")
             continue
         except urllib.error.URLError as err:
             c.error(f"{nombre}: sin conexion con extensions.gnome.org ({err.reason})")
             con_error.append(nombre)
+            registro.append(f"ERROR       {uuid}  (sin conexion)")
             continue
         except json.JSONDecodeError:
             c.error(f"{nombre}: la API devolvio algo que no es JSON")
             con_error.append(nombre)
+            registro.append(f"ERROR       {uuid}  (respuesta no-JSON de la API)")
             continue
 
         descarga = info.get("download_url")
         if not descarga:
             c.aviso(f"{nombre}: la API no da enlace de descarga para GNOME {ver}")
             sin_build.append(nombre)
+            registro.append(f"sin-build   {uuid}  (no hay para GNOME {ver})")
             continue
 
         c.accion("Instalando", f"{nombre} v{info.get('version', '?')}")
@@ -605,10 +642,13 @@ def paso_extensiones(x: Ctx) -> None:
         except (urllib.error.URLError, Fallo, zipfile.BadZipFile, OSError) as err:
             c.error(f"{nombre}: {err}")
             con_error.append(nombre)
+            registro.append(f"ERROR       {uuid}  ({err})")
             continue
         puestas.append(uuid)
+        registro.append(f"descargada  {uuid}  v{info.get('version', '?')}")
 
     x.extensiones_puestas = puestas
+    _escribir_txt_extensiones(x, ver, registro)
     if puestas:
         c.ok(f"{len(puestas)} extensiones instaladas")
     if sin_build:

@@ -22,3 +22,6 @@ __pycache__/
 
 # salida de diagnostico pegada para depurar
 extension*.txt
+
+# lista/diagnostico que genera el instalador
+extensiones_descargadas.txt

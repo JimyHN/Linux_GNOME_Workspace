@@ -194,6 +194,15 @@ Lo que no funciona, y está comprobado:
   `wtype` y `ydotool` no sirven. Es una barrera de seguridad, no una
   dependencia que falte. No lo intentes otra vez.
 
+## extensiones_descargadas.txt
+
+`paso_extensiones` deja en la raíz del repo un `extensiones_descargadas.txt`
+con una extensión por fila: estado (`descargada` / `ya-estaba` / `sin-build`
+/ `ERROR`), UUID y `disco=si/no` según exista su `metadata.json`. Es registro
+y diagnóstico a la vez: si una sale `disco=si` pero GNOME no la enseña, el
+problema es de carga (cerrar sesión, `disable-user-extensions`), no de
+instalación. Está en `.gitignore`; no se commitea.
+
 ## `gnome-extensions list` miente
 
 `extensiones_instaladas()` lee el **disco**, no el Shell. No lo cambies por
