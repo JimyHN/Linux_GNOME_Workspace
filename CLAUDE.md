@@ -36,7 +36,7 @@ Capturado el 2026-10-04 (ver `data/extensions.json` → `capturado_en`):
 | Sesión | Wayland |
 | Tema | Yaru-magenta-dark, acento `pink`, `prefer-dark` |
 | Teclado | `xkb es` |
-| Extensiones de usuario | 9 (se descargan de extensions.gnome.org) |
+| Extensiones de usuario | 8 (se descargan de extensions.gnome.org) |
 | Extensiones del sistema | 7 (vienen en `gnome-shell-ubuntu-extensions`) |
 | Ramas de dconf | 19 ficheros, 160 claves |
 
@@ -181,10 +181,15 @@ encima) la extension se descarga, instala **y carga en vivo, sin cerrar
 sesion**. Hay un timeout por extension (`TIMEOUT_DIALOGO`, 180 s): si no
 respondes al dialogo, se salta y sigue con la siguiente.
 
-Es lo que el usuario queria y se probo que funciona. El Ctrl+Enter **no se
-puede pulsar por software** (Mutter no implementa `virtual-keyboard` en
-Wayland: xdotool/wtype/ydotool no sirven), pero el usuario hace el clic, que
-es lo que pedia.
+El Ctrl+Enter del dialogo se pulsa solo con **ydotool** (`preparar_ydotool`,
+`_enviar_ctrl_enter`): inyecta por `/dev/uinput` a nivel kernel, que SI
+funciona en Wayland — al reves de lo que creia antes. xdotool (solo X11),
+wtype y el protocolo `virtual-keyboard` de Mutter no valen; ydotool por
+uinput si. Necesita el demonio `ydotoold` como root (su socket es 0600 root,
+asi que `ydotool` tambien va con sudo). La llamada a InstallRemoteExtension
+se lanza en segundo plano, se esperan 2 s a que salga el dialogo, se manda
+Ctrl+Enter y 3 s hasta la siguiente. Si ydotool no se puede montar, se cae a
+manual (le das a Instalar tu).
 
 Si no hay GNOME Shell en el bus de sesion (por SSH, por ejemplo), se cae a la
 descarga directa del zip a `~/.local/share/gnome-shell/extensions` y entonces
@@ -217,6 +222,11 @@ exista `metadata.json` en el destino y, si no está, descomprime a mano.
 
 **Pestañas a la izquierda**: `sidebar.revamp` y `sidebar.verticalTabs` en el
 `user.js` de cada perfil (nativas desde Firefox 136).
+
+Firefox tiene que estar CERRADO al correr el instalador: `user.js` solo se
+aplica al arrancar de cero y un Firefox abierto reescribe `prefs.js` al salir,
+pisando los cambios. `_firefox_corriendo()` avisa. Kali usa firefox-esr 140,
+que ya trae pestañas verticales (desde 136).
 
 **Extensiones** (4): Multi-Account Containers, Container Proxy, FoxyProxy
 Standard y Wappalyzer. El `.xpi` se deja en `<perfil>/extensions/<guid>.xpi`

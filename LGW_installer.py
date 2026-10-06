@@ -78,6 +78,8 @@ class Ctx:
         self.dry_run = dry_run
         self.reconfigurar = reconfigurar
         self.asumir_si = False
+        self.auto_enter = False   # pulsar Ctrl+Enter solo en el dialogo
+        self._ydotoold = None
         self.perfil: dict = {}
         self.so: str = ""
         self.hechos = 0
@@ -558,6 +560,62 @@ def extensiones_en_shell() -> set[str]:
                               capture_output=True, text=True).stdout.split())
 
 
+YDOTOOL_SOCKET = "/run/.ydotool_socket"
+# Codigos de tecla del kernel (linux/input-event-codes.h): Ctrl izq y Enter.
+_KEY_CTRL, _KEY_ENTER = 29, 28
+
+
+def preparar_ydotool(x: Ctx) -> bool:
+    """Deja ydotool listo para confirmar el dialogo con Ctrl+Enter.
+
+    En Wayland no se pueden enviar teclas por el protocolo de Mutter, pero
+    ydotool inyecta por /dev/uinput (nivel kernel), que si funciona. Hace
+    falta el demonio ydotoold como root; su socket queda en modo 0600 root,
+    asi que ydotool tambien se llama con sudo."""
+    c = x.c
+    if x.dry_run:
+        return False
+    if not shutil.which("ydotool"):
+        c.accion("Instalando", "ydotool (para confirmar los dialogos solo)")
+        try:
+            x.correr(["apt-get", "install", "-y", "ydotool"], root=True)
+        except Fallo as e:
+            c.aviso(f"no se pudo instalar ydotool ({e}); tendras que darle a Instalar a mano")
+            return False
+    if not shutil.which("ydotool"):
+        return False
+    if not Path(YDOTOOL_SOCKET).exists():
+        try:
+            x._ydotoold = subprocess.Popen(
+                ["sudo", "ydotoold"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError as e:
+            c.aviso(f"no se pudo arrancar ydotoold ({e}); dalo a mano")
+            return False
+        for _ in range(24):
+            if Path(YDOTOOL_SOCKET).exists():
+                break
+            time.sleep(0.25)
+    if not Path(YDOTOOL_SOCKET).exists():
+        c.aviso("ydotoold no dejo su socket; tendras que darle a Instalar a mano")
+        return False
+    c.ok("ydotool listo: los dialogos se confirman solos con Ctrl+Enter")
+    return True
+
+
+def _enviar_ctrl_enter(x: Ctx) -> None:
+    subprocess.run(
+        ["sudo", "ydotool", "key",
+         f"{_KEY_CTRL}:1", f"{_KEY_ENTER}:1", f"{_KEY_ENTER}:0", f"{_KEY_CTRL}:0"],
+        capture_output=True)
+
+
+def parar_ydotool(x: Ctx) -> None:
+    if x._ydotoold is not None:
+        subprocess.run(["sudo", "pkill", "-f", "ydotoold"], capture_output=True)
+        x._ydotoold = None
+
+
 def _instalar_via_shell(x: Ctx, uuid: str) -> str:
     """Pide al Shell que instale la extension, como el interruptor de la web.
 
@@ -567,21 +625,29 @@ def _instalar_via_shell(x: Ctx, uuid: str) -> str:
     if x.dry_run:
         x.c.detalle(f"(dry-run) InstallRemoteExtension {uuid}")
         return "ok"
+    # El dialogo bloquea la llamada hasta que se responde. Si vamos a pulsar
+    # Ctrl+Enter nosotros, hay que lanzar la llamada en segundo plano, esperar
+    # a que salga el dialogo (2 s) y mandar la tecla.
+    proc = subprocess.Popen(
+        ["gdbus", "call", "--session", "--dest", "org.gnome.Shell",
+         "--object-path", "/org/gnome/Shell", "--method",
+         "org.gnome.Shell.Extensions.InstallRemoteExtension", uuid],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if x.auto_enter:
+        time.sleep(2)
+        _enviar_ctrl_enter(x)
     try:
-        r = subprocess.run(
-            ["gdbus", "call", "--session", "--dest", "org.gnome.Shell",
-             "--object-path", "/org/gnome/Shell", "--method",
-             "org.gnome.Shell.Extensions.InstallRemoteExtension", uuid],
-            capture_output=True, text=True, timeout=TIMEOUT_DIALOGO)
+        out, err = proc.communicate(timeout=TIMEOUT_DIALOGO)
     except subprocess.TimeoutExpired:
+        proc.kill()
         return "timeout"
-    salida = (r.stdout + r.stderr).strip()
+    salida = (out + err).strip()
     x.c.detalle(salida)
     if "successful" in salida:
         return "ok"
     if "cancelled" in salida:
         return "cancel"
-    return salida.splitlines()[-1] if salida else f"codigo {r.returncode}"
+    return salida.splitlines()[-1] if salida else f"codigo {proc.returncode}"
 
 
 def _escribir_txt_extensiones(x: Ctx, ver: str, registro: list[str]) -> None:
@@ -631,8 +697,13 @@ def paso_extensiones(x: Ctx) -> None:
     registro: list[str] = []
 
     if via_vivo:
-        c.info("instalacion en vivo: dale a Instalar en el dialogo de cada una "
-               f"(se salta sola a los {TIMEOUT_DIALOGO}s sin respuesta)")
+        x.auto_enter = preparar_ydotool(x)
+        if x.auto_enter:
+            c.info("instalacion en vivo: se confirma sola cada dialogo con Ctrl+Enter "
+                   "(2 s para que salga, 3 s entre una y otra)")
+        else:
+            c.info("instalacion en vivo: dale a Instalar en el dialogo de cada una "
+                   f"(se salta sola a los {TIMEOUT_DIALOGO}s sin respuesta)")
     else:
         c.aviso("no hay GNOME Shell en el bus de sesion; se bajan a disco y haran "
                 "falta cerrar sesion para que carguen")
@@ -663,6 +734,8 @@ def paso_extensiones(x: Ctx) -> None:
                 c.error(f"{nombre}: {res}")
                 con_error.append(nombre)
                 registro.append(f"ERROR       {uuid}  ({res})")
+            if x.auto_enter:
+                time.sleep(3)
             continue
 
         # Sin Shell en el bus: descarga directa a disco (requiere cerrar sesion).
@@ -687,6 +760,7 @@ def paso_extensiones(x: Ctx) -> None:
             con_error.append(nombre)
             registro.append(f"ERROR       {uuid}  ({err})")
 
+    parar_ydotool(x)
     x.extensiones_puestas = puestas
     _escribir_txt_extensiones(x, ver, registro)
 
@@ -782,6 +856,13 @@ def _crear_contenedores(x: Ctx, perfil: Path, contenedores: list[dict]) -> None:
         c.ok(f"{len(nuevos)} contenedores creados")
 
 
+def _firefox_corriendo() -> bool:
+    for n in ("firefox", "firefox-esr", "firefox-bin"):
+        if subprocess.run(["pgrep", "-x", n], capture_output=True).returncode == 0:
+            return True
+    return False
+
+
 def paso_firefox(x: Ctx) -> None:
     c = x.c
     try:
@@ -800,6 +881,15 @@ def paso_firefox(x: Ctx) -> None:
     exts = cfg.get("extensiones", [])
     puestas = yaestaban = 0
 
+    # user.js solo se aplica al ARRANCAR Firefox, y un Firefox abierto reescribe
+    # prefs.js al cerrarse, pisando lo que pongamos. Por eso las pestañas no se
+    # movian: hay que cerrarlo y volver a abrirlo.
+    if _firefox_corriendo():
+        c.aviso("Firefox esta abierto: cierralo del todo y vuelve a abrirlo al "
+                "final, o las pestañas verticales no se aplicaran")
+        x.notas.append("cierra Firefox por completo y vuelve a abrirlo: las pestañas "
+                       "a la izquierda solo se aplican al arrancar de cero")
+
     for perfil in perfiles:
         c.accion("Perfil", perfil.name)
 
@@ -810,9 +900,9 @@ def paso_firefox(x: Ctx) -> None:
                     "// Pestañas verticales nativas (Firefox 136+) y sideload de xpi.\n")
         previo = destino.read_text(errors="replace") if destino.is_file() else ""
         if previo.startswith(cabecera) and lineas in previo:
-            c.info("pestañas a la izquierda ya configuradas")
+            c.info("pestañas a la izquierda ya configuradas (se ven al reiniciar Firefox)")
         else:
-            c.accion("Configurando", "pestañas a la izquierda")
+            c.accion("Configurando", "pestañas a la izquierda (se ven al reiniciar Firefox)")
             if not x.dry_run:
                 # Conservar lo que el usuario tuviera puesto a mano.
                 conservado = "\n".join(
@@ -1115,26 +1205,6 @@ def paso_dconf(x: Ctx) -> None:
 
 def paso_retoques(x: Ctx) -> None:
     c = x.c
-    perfiles = DATA / "burn-my-windows"
-    if perfiles.is_dir() and any(perfiles.glob("*.conf")):
-        destino = Path.home() / ".config/burn-my-windows/profiles"
-        c.accion("Copiando", f"perfiles de burn-my-windows → {destino}")
-        if not x.dry_run:
-            destino.mkdir(parents=True, exist_ok=True)
-        activo = None
-        for f in sorted(perfiles.glob("*.conf")):
-            if not x.dry_run:
-                shutil.copy2(f, destino / f.name)
-            activo = destino / f.name
-        if activo:
-            c.accion("Enlazando", f"active-profile → {activo}")
-            x.correr(["dconf", "write",
-                      "/org/gnome/shell/extensions/burn-my-windows/active-profile",
-                      f"'{activo}'"])
-            c.ok("perfil de efectos enlazado a la ruta de este usuario")
-    else:
-        c.saltado("no hay perfiles de burn-my-windows")
-
     faltan = []
     media = DATA / "dconf" / "11-media-keys.ini"
     if media.is_file():
