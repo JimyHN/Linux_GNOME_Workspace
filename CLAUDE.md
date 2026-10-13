@@ -126,8 +126,13 @@ pedir un paquete de Ubuntu en Kali te dejaba sin `curl` ni `dconf-cli`.
 
 `paso_apt_base` instala, ademas de lo del escritorio, la lista
 `paquetes_herramientas` de `data/distros.json`: python3, python3-pip,
-python3-setuptools, cewl, dirsearch, seclists y wordlists. Una a una y
+python3-setuptools, cewl, seclists, wordlists y git. Una a una y
 tolerando fallos (en Ubuntu puede faltar alguna; en Kali estan todas).
+
+**dirsearch** no va por apt (la version empaquetada se queda corta):
+`_instalar_dirsearch()` lo clona de GitHub en `/opt/dirsearch`, instala sus
+`requirements.txt` con pip y deja un lanzador en `/usr/local/bin/dirsearch`.
+Necesita git y pip, que se instalan justo antes. Idempotente.
 
 Despues descomprime rockyou (`/usr/share/wordlists/rockyou.txt.gz` ->
 `rockyou.txt`, con `gunzip -k`, idempotente) y, **si hay un

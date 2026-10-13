@@ -27,7 +27,8 @@
       "curl",
       "unzip",
       "dconf-cli",
-      "gnome-shell-extension-prefs"
+      "gnome-shell-extension-prefs",
+      "git"
     ],
     "paquetes_extensiones": [
       "gnome-shell-extension-desktop-icons-ng",
@@ -55,7 +56,6 @@
       "python3-pip",
       "python3-setuptools",
       "cewl",
-      "dirsearch",
       "seclists",
       "wordlists"
     ]
@@ -66,7 +66,8 @@
       "curl",
       "unzip",
       "dconf-cli",
-      "gnome-shell-extension-prefs"
+      "gnome-shell-extension-prefs",
+      "git"
     ],
     "paquetes_extensiones": [
       "gnome-shell-ubuntu-extensions"
@@ -90,7 +91,6 @@
       "python3-pip",
       "python3-setuptools",
       "cewl",
-      "dirsearch",
       "seclists",
       "wordlists"
     ]

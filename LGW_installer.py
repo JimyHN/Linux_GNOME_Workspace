@@ -423,6 +423,50 @@ def paso_respaldo(x: Ctx) -> None:
     c.ok(f"{len(guardadas)} ramas respaldadas · deshacer con --revert")
 
 
+def _instalar_dirsearch(x: Ctx) -> None:
+    """dirsearch desde git (la version de apt se queda corta).
+
+    Clona en /opt/dirsearch, instala sus requirements con pip y deja un
+    lanzador en /usr/local/bin/dirsearch. Necesita git y pip, que se
+    instalan antes en paso_apt_base. Idempotente: si ya esta, no repite."""
+    c = x.c
+    destino = Path("/opt/dirsearch")
+    lanzador = Path("/usr/local/bin/dirsearch")
+    if lanzador.is_file() and (destino / ".git").is_dir():
+        c.saltado("dirsearch ya instalado")
+        return
+
+    c.accion("Instalando", "setuptools (pip)")
+    x.correr(["python3", "-m", "pip", "install", "setuptools", "--break-system-packages"],
+             tolerante=True)
+
+    if not (destino / ".git").is_dir():
+        c.accion("Clonando", "dirsearch -> /opt/dirsearch")
+        try:
+            x.correr(["git", "clone", "https://github.com/maurosoria/dirsearch",
+                      str(destino)], root=True)
+        except Fallo as e:
+            c.aviso(f"no se pudo clonar dirsearch: {e}")
+            x.notas.append("dirsearch no se instalo (fallo el git clone)")
+            return
+
+    req = destino / "requirements.txt"
+    if req.is_file() or x.dry_run:
+        c.accion("Instalando", "requirements de dirsearch (pip)")
+        x.correr(["python3", "-m", "pip", "install", "-r", str(req),
+                  "--break-system-packages"], tolerante=True)
+
+    c.accion("Creando", "/usr/local/bin/dirsearch")
+    if not x.dry_run:
+        tmp = Path(tempfile.mkstemp(suffix=".sh")[1])
+        tmp.write_text('#!/bin/bash\nexec python3 /opt/dirsearch/dirsearch.py "$@"\n')
+        try:
+            x.correr(["install", "-m", "0755", str(tmp), str(lanzador)], root=True)
+        finally:
+            tmp.unlink(missing_ok=True)
+    c.ok("dirsearch instalado (comando: dirsearch)")
+
+
 def _instalar_paquetes(x: Ctx, paquetes: list[str], etiqueta: str) -> list[str]:
     """Instala uno a uno y tolerando fallos.
 
@@ -477,6 +521,8 @@ def paso_apt_base(x: Ctx) -> None:
     fallidos = _instalar_paquetes(x, perfil.get("paquetes_herramientas", []), "herramientas")
     if fallidos:
         x.notas.append(f"herramientas no instaladas en esta distro: {', '.join(fallidos)}")
+
+    _instalar_dirsearch(x)
 
     # rockyou viene comprimido en gzip; descomprimirlo deja la wordlist lista
     # para usarla. Idempotente: si ya esta el .txt, no se toca.
