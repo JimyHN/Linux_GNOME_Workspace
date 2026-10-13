@@ -472,6 +472,47 @@ def paso_apt_base(x: Ctx) -> None:
             f"el tema Yaru no se pudo instalar ({', '.join(fallidos)}); "
             "el escritorio usara el tema por defecto de la distro")
 
+    # Herramientas de pentesting (python, pip, setuptools, cewl, dirsearch,
+    # seclists). En Ubuntu puede que falte alguna; se tolera.
+    fallidos = _instalar_paquetes(x, perfil.get("paquetes_herramientas", []), "herramientas")
+    if fallidos:
+        x.notas.append(f"herramientas no instaladas en esta distro: {', '.join(fallidos)}")
+
+    # rockyou viene comprimido en gzip; descomprimirlo deja la wordlist lista
+    # para usarla. Idempotente: si ya esta el .txt, no se toca.
+    rock_txt = Path("/usr/share/wordlists/rockyou.txt")
+    rock_gz = Path("/usr/share/wordlists/rockyou.txt.gz")
+    if rock_txt.is_file():
+        c.saltado("rockyou.txt ya descomprimido")
+    elif rock_gz.is_file():
+        c.accion("Descomprimiendo", "rockyou.txt.gz")
+        try:
+            # -k conserva el .gz original por si hace falta otra vez.
+            x.correr(["gunzip", "-k", str(rock_gz)], root=True)
+            c.ok("rockyou.txt listo en /usr/share/wordlists")
+        except Fallo as e:
+            c.aviso(f"no se pudo descomprimir rockyou: {e}")
+            x.notas.append("rockyou no se descomprimio; hazlo con "
+                           "sudo gunzip -k /usr/share/wordlists/rockyou.txt.gz")
+    else:
+        c.saltado("no hay rockyou.txt.gz (deberia venir con el paquete wordlists)")
+
+    # Si el repo trae un requirements.txt, instalar sus paquetes de Python.
+    # --break-system-packages porque Debian/Kali marcan el entorno gestionado
+    # (PEP 668). Va como usuario, no como root.
+    req = RAIZ / "requirements.txt"
+    if req.is_file():
+        c.accion("Instalando", "dependencias de requirements.txt (pip)")
+        try:
+            x.correr(["python3", "-m", "pip", "install", "-r", str(req),
+                      "--break-system-packages"])
+            c.ok("requirements.txt instalado")
+        except Fallo as e:
+            c.aviso(f"pip fallo con requirements.txt: {e}")
+            x.notas.append("pip no pudo instalar requirements.txt; revisalo a mano")
+    else:
+        c.saltado("no hay requirements.txt en el repo (pip no se ejecuta)")
+
 
 def paso_sublime(x: Ctx) -> None:
     c = x.c

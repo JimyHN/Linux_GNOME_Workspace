@@ -12,7 +12,14 @@
     "reemplaza: que extensiones apagar, y SOLO si la de la izquierda se ha",
     "instalado de verdad. dash-to-panel sustituye al dock, pero si no llega",
     "a instalarse no se toca el dock que traiga la distro: quedarse sin",
-    "ninguna barra es peor que tener la de serie."
+    "ninguna barra es peor que tener la de serie.",
+    "",
+    "paquetes_herramientas: utilidades de pentesting. En Kali existen todas;",
+    "en Ubuntu puede que no (dirsearch, seclists, cewl), pero se instalan una",
+    "a una y tolerando fallos, asi que no rompe nada.",
+    "",
+    "Si hay un requirements.txt en la raiz del repo, el instalador corre",
+    "pip install -r requirements.txt --break-system-packages (como usuario)."
   ],
   "kali": {
     "nombre": "Kali",
@@ -42,6 +49,15 @@
     "ids": [
       "kali",
       "debian"
+    ],
+    "paquetes_herramientas": [
+      "python3",
+      "python3-pip",
+      "python3-setuptools",
+      "cewl",
+      "dirsearch",
+      "seclists",
+      "wordlists"
     ]
   },
   "ubuntu": {
@@ -68,6 +84,15 @@
     },
     "ids": [
       "ubuntu"
+    ],
+    "paquetes_herramientas": [
+      "python3",
+      "python3-pip",
+      "python3-setuptools",
+      "cewl",
+      "dirsearch",
+      "seclists",
+      "wordlists"
     ]
   }
 }

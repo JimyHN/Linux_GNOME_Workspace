@@ -122,6 +122,20 @@ install`, un paquete inexistente tumba la instalación de todos los demás:
 pedir un paquete de Ubuntu en Kali te dejaba sin `curl` ni `dconf-cli`.
 `_instalar_paquetes()` va de uno en uno y tolera fallos.
 
+## Herramientas de pentesting
+
+`paso_apt_base` instala, ademas de lo del escritorio, la lista
+`paquetes_herramientas` de `data/distros.json`: python3, python3-pip,
+python3-setuptools, cewl, dirsearch, seclists y wordlists. Una a una y
+tolerando fallos (en Ubuntu puede faltar alguna; en Kali estan todas).
+
+Despues descomprime rockyou (`/usr/share/wordlists/rockyou.txt.gz` ->
+`rockyou.txt`, con `gunzip -k`, idempotente) y, **si hay un
+`requirements.txt` en la raiz del repo**, corre
+`pip install -r requirements.txt --break-system-packages` como usuario
+(el `--break-system-packages` es por PEP 668 en Debian/Kali). No hay
+requirements.txt en el repo todavia: si lo quieres, ponlo en la raiz.
+
 ## Lo que no se transfiere tal cual
 
 Tres cosas del equipo de referencia no son válidas en otra máquina. Si tocas
