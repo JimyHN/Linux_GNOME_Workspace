@@ -92,3 +92,14 @@ el instalador. El proxy en si se añade a mano:
        Guardar.
     4. Ve a "Asignar" y pon los contenedores BurpSuite usando ese proxy
        (en vez de "Directamente").
+
+
+-------------------------------------------------------------------------
+ 5. BUSCADOR POR DEFECTO: DUCKDUCKGO (si no se aplico solo)
+-------------------------------------------------------------------------
+
+El instalador lo pone por politica en firefox-esr. Si usas otro Firefox
+o no se aplico:
+
+    1. Ajustes -> "Buscar".
+    2. "Motor de busqueda predeterminado" -> elige DuckDuckGo.

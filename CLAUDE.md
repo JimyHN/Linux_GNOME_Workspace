@@ -257,6 +257,13 @@ Firefox usan numeros reservados enormes (~2^32): hay que excluirlos al
 calcular el siguiente id o se dispara. Idempotente por nombre; Firefox debe
 estar cerrado o reescribe el fichero al salir.
 
+**Buscador por defecto** (`_motor_busqueda`): DuckDuckGo, via politica
+`SearchEngines.Default` en `/etc/firefox-esr/policies/policies.json`. El
+motor por defecto vive en `search.json.mozlz4` (comprimido, no editable a
+mano); la politica es la via limpia y firefox-esr la respeta. El Firefox
+snap de Ubuntu la ignora, pero el destino es Kali. Se fusiona con lo que
+hubiera en policies.json. Configurable en `data/firefox.json` -> `motor_busqueda`.
+
 **Lo que NO se automatiza** (eleccion del usuario, no limitacion tecnica
 sola): la config interna de Container-proxy y FoxyProxy (proxies,
 asignaciones) vive en el IndexedDB de cada extension y no se pre-carga desde

@@ -54,5 +54,6 @@
       "color": "orange",
       "icon": "chill"
     }
-  ]
+  ],
+  "motor_busqueda": "DuckDuckGo"
 }

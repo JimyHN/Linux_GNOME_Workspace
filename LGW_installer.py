@@ -950,6 +950,47 @@ def _firefox_corriendo() -> bool:
     return False
 
 
+def _motor_busqueda(x: Ctx, nombre: str) -> None:
+    """Fija el buscador por defecto de Firefox por politica empresarial.
+
+    El motor por defecto vive en search.json.mozlz4 (comprimido, no se
+    escribe a mano); la via limpia es la politica SearchEngines.Default,
+    que firefox-esr (el de Kali) respeta. En el Firefox snap de Ubuntu la
+    politica SearchEngines se ignora, pero el destino es Kali."""
+    c = x.c
+    if not nombre:
+        return
+    bases = [Path(d) for d in FIREFOX_POLITICAS if Path(d).parent.exists()]
+    if not bases:
+        bases = [Path("/etc/firefox-esr/policies")]
+    escritos = 0
+    for carpeta in bases:
+        fichero = carpeta / "policies.json"
+        actual: dict = {}
+        if fichero.is_file():
+            try:
+                actual = json.loads(fichero.read_text())
+            except json.JSONDecodeError:
+                c.aviso(f"{fichero} no era JSON valido; se reescribe")
+        pol = actual.setdefault("policies", {})
+        pol.setdefault("SearchEngines", {})["Default"] = nombre
+        c.accion("Buscador", f"{nombre} por defecto -> {fichero}")
+        if x.dry_run:
+            escritos += 1
+            continue
+        tmp = Path(tempfile.mkstemp(suffix=".json")[1])
+        tmp.write_text(json.dumps(actual, indent=2, ensure_ascii=False) + "\n")
+        try:
+            x.correr(["install", "-D", "-m", "0644", str(tmp), str(fichero)], root=True)
+            escritos += 1
+        except Fallo as err:
+            c.aviso(f"{fichero}: {err}")
+        finally:
+            tmp.unlink(missing_ok=True)
+    if escritos:
+        c.ok(f"buscador por defecto: {nombre} (se ve al reiniciar Firefox; solo firefox-esr)")
+
+
 def paso_firefox(x: Ctx) -> None:
     c = x.c
     try:
@@ -1024,6 +1065,8 @@ def paso_firefox(x: Ctx) -> None:
             puestas += 1
 
         _crear_contenedores(x, perfil, cfg.get("contenedores", []))
+
+    _motor_busqueda(x, cfg.get("motor_busqueda", ""))
 
     if puestas:
         c.ok(f"{puestas} extensiones de Firefox puestas")
